@@ -40,7 +40,7 @@ startup-scout/
 ### 1. Clone and create virtual environment
 
 ```bash
-cd startup-scout
+cd automation
 python3 -m venv venv
 source venv/bin/activate
 pip install anthropic python-dotenv google-auth google-auth-oauthlib google-api-python-client markdown
