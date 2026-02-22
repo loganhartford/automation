@@ -1,0 +1,186 @@
+
+Logo
+StrictlyVC
+LOG IN
+SIGN UP
+HOME
+ADVERTISING
+EVENTS
+PODCASTS
+ABOUT
+OpenAI's Consumer Hardware Plans Begin to Take Shape
+OpenAI is releasing a number of smart devices, Snap loses a key Specs contributor, and why dogs love sticks 
+
+Alex Gove
+Connie Loizos
+Alex Gove & Connie Loizos
+Feb 20, 2026
+
+•
+
+13 min read
+
+
+
+
+
+
+
+
+Happy weekend, all.:)
+
+Top News
+OpenAI is developing an AI-powered smart speaker with a camera and facial recognition that could ship as early as 2027 for $200 to $300, alongside smart glasses and a smart lamp. The Information also reports that it is building a 200-plus-person hardware team following its $6.5 billion acquisition of Jony Ive’s io Products. Engadget has more here.
+
+More on OpenAI: company employees debated alerting Canadian authorities last June after an 18-year-old later identified as the suspect in a mass shooting described gun violence scenarios in ChatGPT, but the company chose not to report her, saying the activity did not meet its threshold for imminent risk. The Wall Street Journal has more here.
+
+Sponsored By …
+Harmonic 
+
+ “Scout, identify strong follow-on investors for one of my recent deals @Company” 
+
+ Agents built for investing. 
+
+See more 
+
+Great News for xAI: Grok Is Now Pretty Good at Answering Questions about Baldur’s Gate
+
+Image Credits: Muhammed Selim Korkutata / Anadolu / Getty Images
+
+By Russell Brandom
+
+Different AI labs have different priorities. OpenAI has traditionally focused on consumer users, for instance, while its rival Anthropic tends to target enterprises. Elon Musk’s xAI, we discovered recently, has been placing particular emphasis on video-game walkthroughs.
+
+On Friday, Business Insider’s Grace Kay published a detailed and far-reaching report about xAI, the AI startup recently acquired by SpaceX, with particular emphasis on how Musk is making life difficult for employees. But this particular anecdote stood out:
+
+In one instance last year, a model release was delayed for several days because Musk was dissatisfied with how the chatbot answered detailed questions about the video game “Baldur’s Gate,” according to people familiar with the matter. High-level engineers were pulled from other projects to improve the responses before launch, they said.
+
+Of course, you can imagine the frustration of any respected and experienced engineer who shows up to work thinking he’ll be tackling fundamental problems of knowledge and machine intelligence, only to be sidetracked into helping a 54-year-old man beat his video game. But the anecdote raises an even more pressing question: Did Musk end up getting the gaming skills he wanted?
+
+To answer that question, our resident RPG enthusiast Ram Iyer put together a set of five general questions about Baldur’s Gate, which we ran against xAI and the three major models in a kind of quasi-benchmark that I’ve decided to call “BaldurBench.”
+
+In the interest of journalistic transparency, I’ve made all the chat transcripts public, so you can see them here: Grok, ChatGPT, Claude, and Gemini.
+
+First, the good news: Grok actually gives pretty good information. Its responses were a bit dense with gamer jargon — “save-scumming” instead of saving and “DPS” instead of damage — but the answers were both useful and well-informed, provided you knew what it was talking about. Grok also really loves tables and theorycraft, which is about what you would expect.
+
+Read more
+Massive Fundings
+Altesa BioSciences, a four-year-old startup based in College Park, GA, that is testing an antiviral drug targeting rhinovirus in patients with chronic lung diseases, raised a $75 million Series B round led by Forbion, with Sanofi also participating. BioPharma Dive has more here.
+
+Code Metal, a three-year-old Boston startup that provides code translation and verification tools for AI-generated and legacy software, raised a $125 million Series B round at a $1.25 billion valuation. The deal was led by Salesforce Ventures, with Accel and B Capital also taking part, among others. Tech Funding News has more here.
+
+Fluidstack, a nine-year-old New York startup that offers cloud computing services to AI companies, is in talks to raise a $100 million round from Google at a $7.5 billion valuation. The Wall Street Journal has more here.
+
+Jump, a three-year-old startup based in Salt Lake City that provides an AI assistant that automates meeting preparation, note-taking, follow-ups, and CRM updates for financial advisors, raised an $80 million Series B round led by Insight Partners, with F-Prime, Allianz Life Ventures, TIAA, Battery Ventures, Sorenson Capital, Pelion Venture Partners, and Citi Ventures also joining in. More here.
+
+Big-But-Not-Crazy-Big Fundings
+Flinn.ai, a four-year-old Vienna startup that automates regulatory and quality workflows for medical device and pharmaceutical manufacturers, raised a $20 million round led by HV Capital, with Bertelsmann Healthcare Investments as well as previous investors Cherry Ventures, Speedinvest, and SquareOne also piling on. Tech.eu has more here.
+
+InScope, a three-year-old startup that provides an AI-powered financial reporting platform for companies and accounting firms, raised a $14.5 million Series A round led by Norwest, with Storm Ventures and previous investors Better Tomorrow Ventures and Lightspeed Venture Partners also participating. TechCrunch has more here.
+
+LanzaJet, a six-year-old startup based in Deerfield, IL, that develops alcohol-to-jet technology that converts waste-based ethanol into sustainable aviation fuel and renewable diesel, announced a first close of $47 million for a $135 million round with a $650 million pre-money valuation. The deal was co-led by IAG and Shell, with Groupe ADP and LanzaTech also pitching in. ESG Today has more here.
+
+Newity, a six-year-old Chicago startup that has built an online platform to facilitate SBA-backed and growth term loans for small businesses, raised an $11 million round. CMT Digital was the deal lead. The Block has more here.
+
+Vizzia, a four-year-old Paris startup that supplies video surveillance cameras and AI software to help local authorities detect crime and illegal dumping, raised a $35.3 million Series B round led by Base10 Partners, with Headline and Sistafund also investing. Sifted has more here.
+
+Smaller Fundings
+Happyhotel, a six-year-old German startup whose revenue management software uses AI to automate hotel room pricing and distribution in real-time, raised a $7.7 million Series A round led by Reimann Investors, with Start-up BW Innovation Fund, seed + speed Ventures, and Wecken & Cie also contributing. PhocusWire has more here.
+
+Rapidata, a three-year-old Zürich startup that is developing an on-demand human feedback platform for training and evaluating AI models, raised an $8.5 million seed round. Investors included Acequia Capital and BlueYard. More here.
+
+Sponsored By …
+Fidelity. Your Pitch Isn’t the Only Thing Investors Are Evaluating.  
+
+Investors don’t just listen to what you say—they look at how your company operates. Is ownership clear? Do your numbers match your story? Can you answer follow-up questions without digging through spreadsheets? The Fundraise-Ready Startup Kit equips founders with the materials investors expect to see, before pressure is on. Because confidence in the room doesn’t come from slides. It comes from preparation. 
+
+New Funds
+Peak XV, a 17-year-old Bangalore and Singapore-based VC firm that invests across seed, venture, and growth stages in India and Southeast Asia, raised $1.3 billion in new India and Asia-focused funds. TechCrunch has more here. 
+
+Going Public
+Andreessen Horowitz’s A16z Capital Management disclosed a $464.5 million purchase of roughly 27.2 million Navan shares as the travel and expense company faces investor investigations over its IPO disclosures, including a reported $79 million GAAP operating loss and a 12% post-earnings stock drop. PhocusWire has more here.
+
+People
+Snap SVP of Specs Scott Myers has left amid reported strategy clashes with CEO Evan Spiegel just months before the planned commercial launch of its AR glasses, adding uncertainty as the company spins the hardware into a standalone subsidiary. TechCrunch has more here.
+
+An Anthropic-backed PAC is spending $450,000 to defend New York Assembly member Alex Bores in a congressional race after a rival tech-funded super PAC spent $1.1 million attacking him over his AI safety legislation. TechCrunch has more here.
+
+Post-Its
+
+Essential Reads
+A federal judge upheld a $243 million verdict against Tesla over a 2019 Autopilot crash in Florida, rejecting the company’s bid for a new trial and leaving it to pursue an appeal as it faces mounting lawsuits and regulatory scrutiny over its driver-assistance technology. Electrek has more here.
+
+Every few weeks this story gets a little more alarming. The latest, from The Washington Post: Meta, OpenAI, and Oracle are building off-grid data centers run largely on new natural gas plants, creating a shadow power grid that could increase emissions and sidestep utility oversight entirely. More here.
+
+Government filings show Waymo uses about 70 remote assistance agents at a time –including contractors in the Philippines – to help roughly 3,000 robotaxis manage software glitches, while Tesla uses U.S.-based remote agents but has disclosed fewer details about how often they intervene or what control they exert. Wired has more here.
+
+Detours
+Check out the highlights from the Milan Cortina 2026 Winter Olympics, ranging from Franjo von Allmen’s triple gold and Alysa Liu ending a 24-year U.S. drought in women’s figure skating to Ilia Malinin’s stumble, a Canadian curling controversy, and Elana Meyers Taylor’s monobob victory at 41.  
+
+University of Maryland researchers have built a tiny hydrogen-sensing wearable dubbed a “Fitbit for farts” that continuously tracks flatulence for a nationwide Human Flatus Atlas study, aiming to establish baseline digestive patterns and better understand gut health for the 40% of U.S. adults with gastrointestinal issues.
+
+Astronomers have confirmed that an ultra-faint galaxy located about 300 million light-years away is composed of up to 99.98% dark matter.
+
+Brain Rot
+Instagram post
+Retail Therapy
+
+Image Credits: Amanyara
+
+Luxury resort Amanyara in Turks and Caicos is hosting small-group, three- to five-day sports retreats for up to 12 guests featuring athletes such as tennis stars Novak Djokovic and Maria Sharapova and NBA big man Kevin Love.
+
+A Rimowa-inspired vacuum cooler.
+
+Disrupt!
+This is the part of the newsletter where we remind you that Super Early Bird rates for TechCrunch Disrupt expire February 27 at 11:59 p.m. PT. You’re going to want to be there, so save up to $680 now so you can spend it on something else later.
+
+Tips (the non-pecuniary kind)
+Please send all of your hot gossip to connie@strictlyvc.com or alex@strictlyvc.com.
+
+Want to advertise on StrictlyVC?
+To book ads directly, contact us at advertise@techcrunch.com.
+
+Keep Reading
+OpenAI Is ThisClose to Finalizing a New Raise at an $850B Valuation
+/
+
+Feb 19, 2026
+
+OpenAI Is ThisClose to Finalizing a New Raise at an $850B Valuation
+OpenAI closes in on $100+ billion, Block is blowing up, and Draco Malfoy becomes an unlikely star in China
+
+Alex Gove
+Connie Loizos
+Alex Gove, +1
+SpaceX's Numbers Are Stellar, Thanks in Large Part to Starlink
+/
+
+Jan 30, 2026
+
+SpaceX's Numbers Are Stellar, Thanks in Large Part to Starlink
+SpaceX is making the majority of its money from Starlink, OnlyFans weighs an acquisition offer, and toxic mom groups
+
+Alex Gove
+Connie Loizos
+Alex Gove, +1
+OpenAI Starts Testing Ads in the U.S.
+/
+
+Feb 9, 2026
+
+OpenAI Starts Testing Ads in the U.S.
+OpenAI tries out a new business model, Elon Musk shifts SpaceX's focus from Mars to the Moon, and a Ferrari interior designed by Jony Ive and Marc Newson
+
+Alex Gove
+Connie Loizos
+Alex Gove, +1
+
+View more
+What is StrictlyVC?
+Our free daily newsletter provides you with all the info you need to know about the VC scene in Silicon Valley and beyond. Our events bring together VCs, entrepreneurs, and corporate development execs, among others. Sign up for our newsletter today and see what you’ve been missing!
+
+Email
+Subscribe
+
+
+

@@ -20,12 +20,14 @@ def init_db():
     conn.close()
 
 def already_seen(name: str) -> bool:
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute(
-        "SELECT id FROM companies WHERE LOWER(name) = LOWER(?)", (name,)
-    ).fetchone()
-    conn.close()
-    return row is not None
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        row = conn.execute(
+            "SELECT id FROM companies WHERE LOWER(name) = LOWER(?)", (name,)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
 
 def save_company(name, source, passed, report=None):
     conn = sqlite3.connect(DB_PATH)

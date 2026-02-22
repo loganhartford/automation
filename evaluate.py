@@ -36,7 +36,7 @@ Evaluate the company on each dimension below."""
 def extract_companies(newsletter_text: str) -> list:
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=1000,
+        max_tokens=4096,
         messages=[
             {"role": "user", "content": EXTRACTION_PROMPT + "\n\nNewsletter:\n" + newsletter_text}
         ],
@@ -70,14 +70,14 @@ def extract_companies(newsletter_text: str) -> list:
         tool_choice={"type": "tool", "name": "save_startups"}
     )
 
-    return response.content[0].input["startups"]
+    return response.content[0].input.get("startups", [])
 
 
 def check_dealbreakers(name: str, description: str) -> tuple[bool, dict]:
     prompt = DEALBREAKER_PROMPT.format(name=name, description=description)
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=800,
+        max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
         tools=[{
             "name": "save_dealbreaker_results",
@@ -145,7 +145,7 @@ def generate_report(name: str, description: str, dealbreaker_results: dict) -> d
     prompt = REPORT_PROMPT.format(name=name, description=description)
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=1500,
+        max_tokens=2048,
         messages=[{"role": "user", "content": prompt}],
         tools=[{
             "name": "save_report",
@@ -225,26 +225,31 @@ def process_newsletter(text: str, source: str = "manual"):
     print(f"Found {len(companies)} companies: {[c['name'] for c in companies]}")
 
     for company in companies:
-        name = company["name"]
-        description = company["description"]
+        try:
+            name = company["name"]
+            description = company["description"]
 
-        if already_seen(name):
-            print(f"  [{name}] Already in database, skipping.")
+            if already_seen(name):
+                print(f"  [{name}] Already in database, skipping.")
+                continue
+
+            print(f"  [{name}] Checking dealbreakers...")
+            passed, dealbreaker_results = check_dealbreakers(name, description)
+
+            if not passed:
+                failed = [k for k, v in dealbreaker_results.items() if not v["answer"]]
+                print(f"  [{name}] Failed dealbreakers: {failed}. Skipping.")
+                save_company(name, source, passed=False)
+                continue
+
+            print(f"  [{name}] Passed! Generating report...")
+            report = generate_report(name, description, dealbreaker_results)
+            report["_description"] = description  # stash it in the report blob
+            save_company(name, source, passed=True, report=json.dumps(report))
+            print(f"  [{name}] Done.")
+        except Exception as e:
+            print(f"  [{company.get('name', 'unknown')}] ERROR: {e}")
             continue
-
-        print(f"  [{name}] Checking dealbreakers...")
-        passed, dealbreaker_results = check_dealbreakers(name, description)
-
-        if not passed:
-            failed = [k for k, v in dealbreaker_results.items() if not v["answer"]]
-            print(f"  [{name}] Failed dealbreakers: {failed}. Skipping.")
-            save_company(name, source, passed=False)
-            continue
-
-        print(f"  [{name}] Passed! Generating report...")
-        report = generate_report(name, description, dealbreaker_results)
-        save_company(name, source, passed=True, report=json.dumps(report))
-        print(f"  [{name}] Done.")
 
 
 if __name__ == "__main__":

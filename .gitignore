@@ -1,2 +1,6 @@
 .env
 venv/
+credentials.json
+logs/
+token.pickle
+__pycache__/

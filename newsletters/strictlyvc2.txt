@@ -1,0 +1,190 @@
+
+Logo
+StrictlyVC
+LOG IN
+SIGN UP
+HOME
+ADVERTISING
+EVENTS
+PODCASTS
+ABOUT
+OpenAI Is ThisClose to Finalizing a New Raise at an $850B Valuation
+OpenAI closes in on $100+ billion, Block is blowing up, and Draco Malfoy becomes an unlikely star in China
+
+Alex Gove
+Connie Loizos
+Alex Gove & Connie Loizos
+Feb 19, 2026
+
+•
+
+20 min read
+
+
+
+
+
+
+
+
+Top News
+OpenAI is close to securing more than $100 billion in the first phase of a new funding round led by Amazon, SoftBank, Nvidia, and Microsoft, with total fundraising expected to push its valuation above $850 billion based on a $730 billion pre-money. A second phase involving venture firms and sovereign funds could drive the total even higher as the company ramps AI infrastructure spending. Bloomberg has more here.
+
+General Catalyst, the Silicon Valley-based venture firm with more than $43 billion in assets under management, has announced it plans to invest $5 billion in India over the next five years, sharply expanding its push into the country’s startup ecosystem. TechCrunch has more here.
+
+Sponsored By …
+Harmonic  
+
+“Scout, based on what you know about our thesis, show me a mix of African stealth builders and pre-seed climate-adjacent startups” 
+
+ Agents built for investing. 
+
+See more 
+
+Ali Partovi’s Neo Looks to Upend the Accelerator Model With Low-Dilution Terms
+
+Image Credits: Neo
+
+By Marina Temkin
+
+Partovi, who is known for his early investments in Facebook, Cursor, and Kalshi, has just introduced Neo Residency, a new, competitively structured program that combines the firm’s now four-year-old accelerator with a track for current college students.
+
+The terms that Neo Residency offers are so founder-friendly as to be “not even comparable to any other accelerator,” Partovi told TechCrunch.
+
+For the cohort of 12 to 15 startups entering the program this summer, Neo will invest $750,000 via an uncapped SAFE — a contract that gives an investor future equity in exchange for money now, with no ceiling on the valuation used to calculate that stake. Unlike the fixed-percentage deals typical of other accelerators, Neo won’t receive its equity until the company’s next formal funding round, and even then, the dilution is tied to valuation. If a startup raises its next round at a $15 million valuation, Neo’s stake will be 5%, but if that valuation hits $100 million, the firm’s ownership drops to just 0.75%.
+
+“We take the risk up front, so this is extremely favorable to startups,” Partovi said.
+
+In comparison, Y Combinator typically takes a fixed 7% of the company for $125,000, with another $375,000 invested on an uncapped MFN — or most-favored nation — SAFE, a clause that ensures early investors get terms at least as good as those given to later ones. Meanwhile, Andreessen Horowitz’s Speedrun program typically invests $500,000 in exchange for 10% of the startup’ via a SAFE note, and another $500,000 if the next round is raised within 18 months at whatever terms are agreed to by the other investors.
+
+Partovi, who is known for his early investments in Facebook, Cursor, and Kalshi, has just introduced Neo Residency, a new, competitively structured program that combines the firm’s now four-year-old accelerator with a track for current college students.
+
+The terms that Neo Residency offers are so founder-friendly as to be “not even comparable to any other accelerator,” Partovi told TechCrunch.
+
+For the cohort of 12 to 15 startups entering the program this summer, Neo will invest $750,000 via an uncapped SAFE — a contract that gives an investor future equity in exchange for money now, with no ceiling on the valuation used to calculate that stake. Unlike the fixed-percentage deals typical of other accelerators, Neo won’t receive its equity until the company’s next formal funding round, and even then, the dilution is tied to valuation. If a startup raises its next round at a $15 million valuation, Neo’s stake will be 5%, but if that valuation hits $100 million, the firm’s ownership drops to just 0.75%.
+
+“We take the risk up front, so this is extremely favorable to startups,” Partovi said.
+
+In comparison, Y Combinator typically takes a fixed 7% of the company for $125,000, with another $375,000 invested on an uncapped MFN — or most-favored nation — SAFE, a clause that ensures early investors get terms at least as good as those given to later ones. Meanwhile, Andreessen Horowitz’s Speedrun program typically invests $500,000 in exchange for 10% of the startup via a SAFE note, and another $500,000 if the next round is raised within 18 months at whatever terms are agreed to by the other investors.
+
+Read more
+Massive Fundings
+Freeform, an eight-year-old startup based in Hawthorne, CA, whose 3D-printing platform uses multiple lasers and AI-driven simulations to manufacture metal components at scale, raised a $67 million Series B round. Investors included Apandion, AE Ventures, Founders Fund, Linse Capital, NVentures, Threshold Ventures, and Two Sigma Ventures. TechCrunch has more here.
+
+Korsana Biosciences, a two-year-old startup based in Waltham, MA, that is developing monoclonal antibody therapies for neurodegenerative diseases including Alzheimer’s disease, raised a $175 million seed round co-led by Wellington Management and TCGX and including JPMorgan Life Sciences Private Capital and Janus Henderson Investors. BioPharma Dive has more here.
+
+Taalas, a three-year-old Toronto startup that designs custom AI chips by printing portions of specific models onto silicon, raised a $169 million round from investors including Quiet Capital, Fidelity, and Pierre Lamond. The company has raised a total of $219 million. Reuters has more here.
+
+ZaiNar, a nine-year-old Bay Area startup that operates an AI system that delivers precise indoor and outdoor positioning using Wi-Fi and 5G networks instead of satellites, raised a $100+ million round at a $1 billion valuation. Investors included Steve Jurvetson, Jerry Yang, Tom Gruber, Jaan Tallinn, and Nicholas Pritzker. PYMNTS has more here.
+
+Big-But-Not-Crazy-Big Fundings
+Badge, a three-year-old San Francisco startup whose platform enables businesses to issue and manage programmable Apple and Google Wallet passes, raised a $13.8 million Series A round led by TTV Capital, with Stripe, Synchrony Ventures, and Infinity Ventures also investing. More here.
+
+Circuit, a two-year-old Austin startup that uses AI to convert technical documentation into guided workflows for manufacturing and service teams, raised a $30 million round from individual investors including Jim Breyer, Charlie Amato, Lew Cirne, Niccolo De Masi, Tom Long, Gary Petersen, Gary Rieschel, and Craig Robins. More here.
+
+Eagle Wireless, a two-year-old Cleveland company that manufactures cellular modules and connected devices for IoT and automotive markets, raised a $30 million Series B round. Investors included Asymmetric Capital Partners and The O.H.I.O. Fund. The company has raised a total of $44 million. More here.
+
+Kombo, a four-year-old New York startup that enables companies to integrate and transfer employee data across HR, payroll, recruiting, and IT systems through a shared infrastructure layer, raised a $25 million Series A round led by Volition Capital, with Acadian Ventures, 468 Capital, and Y Combinator also contributing. The company has raised a total of $40 million. More here.
+
+Ownwell, a six-year-old Austin startup that automates property tax appeals for homeowners and commercial property owners, raised a $30 million Series B round co-led by Alpha Edison and Mercato Partners, with Intuit Ventures, Left Lane Capital, First Round Capital, Long Journey Ventures, Proof Fund, and Wonder Ventures also participating. Western Alliance Bank provided $20 million in debt financing. The company has raised a total of $54 million in equity funding. Crunchbase News has more here.
+
+Portkey, a three-year-old San Francisco startup that operates an AI gateway that manages production AI traffic, governance, reliability, and cost controls, raised a $15 million Series A round led by Elevation Capital, with Lightspeed also participating. More here.
+
+Rainfall Health, a seven-year-old San Francisco startup whose AI-driven platform is designed to automate compliance and reimbursement reporting for hospitals under CMS value-based care models, raised a $15 million Series A round led by Two Bear Capital. HIT Consultant has more here.
+
+Solid, a two-year-old Helsinki startup that organizes and validates enterprise data to make it accessible to non-technical teams through AI tools, raised a $20 million seed round. Team8 and SignalFire were the co-leads. CTech has more here.
+
+Stable Money, a four-year-old Indian startup that provides a digital platform that enables users to compare, invest in, and manage fixed-income products including bank fixed deposits and bonds, raised a $25 million pre-Series C round at a $175 million valuation. The deal was led by Peak XV Partners, with previous investors Fundamentum Partnership, Z47, and RTP Global also taking part. Deal Street Asia has more here.
+
+Stacks AI, a one-year-old Amsterdam startup that uses AI agents to automate accounting and operational finance workflows for enterprise teams, raised a $23 million Series A round led by Lightspeed, with EQT Ventures, General Catalyst, and S16VC also participating. EU-Startups has more here.
+
+Smaller Fundings
+Adronite, a three-year-old Seattle startup that operates an AI platform that analyzes entire enterprise codebases to provide system-wide visibility and remediation insights, raised a $5 million Series A round led by Gatemore Capital Management. GeekWire has more here.
+
+Copla, a three-year-old Vilnius startup that offers a technology compliance platform that converts financial regulations into guided workflows for financial institutions, raised a $6 million Series A round. Baltic DeepTech, Defence, Security, Resilience, Iron Wolf Capital, Operator Stack, Specialist VC, SuperHero Capital, FirstPick, NGL Ventures, and Loggerhead Partners invested in the deal. Tech Funding News has more here.
+
+EFEX, a four-year-old Menlo Park startup that offers multi-currency accounts, foreign exchange, and cross-border liquidity tools for U.S.-Mexico trade, raised an $8 million seed round led by PayPal Ventures and Floodgate, with Contour Venture Partners and Nido Ventures also pitching in. More here.
+
+Grotto AI, a one-year-old Berkeley startup whose AI platform analyzes leasing interactions and delivers real-time coaching to improve rental conversion rates, raised a $10 million seed round led by Iconiq, with Asymmetric Capital Partners also investing. Pulse 2.0 has more here.
+
+Hook, a two-year-old New York startup that operates a licensed social music remixing app that lets users create and share remixes of popular songs, raised a $10 million Series A round led by Khosla Ventures, with Point72 Ventures, Imaginary Ventures, and Waverley Capital also engaging. MusicAlly has more here.
+
+Monark Markets, a four-year-old New York startup whose API infrastructure enables brokerage and wealth platforms to offer embedded access to private market investments, raised an $8.1 million round led by F-Prime, with The Treasury, Commerce Ventures, Grit Capital Partners, and BBAE Holdings also digging in. FinTech Global has more here.
+
+Odynn, a four-year-old New York startup that enables banks and fintechs to launch branded and configurable travel loyalty portals using a modular platform, raised a $9.5 million seed round co-led by Bonfire Ventures and Fiat Ventures. Tech Funding News has more here.
+
+Rizon, a one-year-old Delaware startup that operates a neobank that offers global USD accounts for payments and everyday spending, raised a $2 million pre-seed round led by Market One Capital. Financial IT has more here.
+
+SportIQ, an eighteen-year-old Berlin company that has developed a smart basketball with an embedded sensor and app that tracks shots and provides real-time feedback and coaching insights, raised a $6.2 million Series A round. Investors included KB Partners, Koppenberg Management, and Match Ventures. The company has raised a total of $12 million. Tech Funding News has more here.
+
+Synchrony Medical, a six-year-old Jersey City and Israeli startup that has developed an FDA-cleared at-home airway clearance system that uses synchronized chest compressions to help COPD patients clear mucus, raised a $5 million round. Edge Medical Ventures led the transaction, with the New Jersey Economic Development Authority, Broadfin Holdings, and Consensus Business Group also chiming in. Medical Device Network has more here.
+
+Sponsored By …
+Fidelity. Your Pitch Isn’t the Only Thing Investors Are Evaluating.  
+
+Investors don’t just listen to what you say—they look at how your company operates. Is ownership clear? Do your numbers match your story? Can you answer follow-up questions without digging through spreadsheets? The Fundraise-Ready Startup Kit equips founders with the materials investors expect to see, before pressure is on. Because confidence in the room doesn’t come from slides. It comes from preparation. 
+
+New Funds
+Frist Cressey Ventures, a 10-year-old Nashville VC firm that invests in early-stage healthcare companies focused on tech-enabled care delivery and AI-native models, raised a $425 million fourth fund, bringing assets under management to nearly $1 billion. More here.
+
+Quantonation, an eight-year-old Paris- and New York City-based VC firm that focuses on quantum and deep-physics startups, raised a €220m second fund backed by Novo Nordisk, Toshiba, Vertex Holdings, and the European Investment Fund. The firm currently has $370+ million. Bloomberg has more here.
+
+Exits
+Scopely, a 15-year-old Los Angeles mobile gaming company, has acquired a majority stake in one-year-old Istanbul studio Loom, which develops mobile games including the puzzle hit Pixel Flow!, in a deal that values Loom at more than $1 billion. Terms were not disclosed. The Hollywood Reporter has more here.
+
+Going Public
+Fintech brokerage Clear Street has withdrawn its U.S. IPO filing after cutting its target raise and delaying the deal, as market volatility and fears that AI could disrupt Wall Street business models continue to chill new listings. The company has raised over $650 million in capital from investors like Prysm Capital, Walleye Capital, NextGen Venture Partners, SBI Group, and NEAR Foundation. Reuters has more here.
+
+People
+Bill Gates pulled out of delivering a keynote at India’s AI Impact Summit hours before he was due to speak, saying he wanted to keep the focus on the event amid renewed scrutiny over his past ties to Jeffrey Epstein. The BBC has more here.
+
+Jamie Siminoff, founder of Amazon-owned Ring, has been on an apology tour after the company’s Super Bowl ad touting its AI-powered Search Party feature sparked backlash over surveillance and data sharing. The New York Times has more here.
+
+Former Sony Pictures CEO Michael Lynton writes that his decision to fast-track Seth Rogen’s comedy The Interview about a plot to assassinate North Korean leader Kim Jong Un stemmed from a desire to fit in with Hollywood’s creative elite, a move he now calls the biggest mistake of his career. The film triggered a disastrous 2014 cyberattack that US authorities attributed to North Korea. The Wall Street Journal has more here.
+
+Layoffs
+The Jack Dorsey payments company Block is carrying out rolling layoffs that could affect up to 10% of its roughly 11,000 employees. Remaining staff describe plunging morale amid job uncertainty, mandatory weekly updates to Dorsey that are then summarized by AI, and pressure to use AI tools daily to boost productivity. Wired has more here.
+
+Post-Its
+
+Essential Reads
+Wired examines persistent rumors that a tight-knit circle of gay founders and investors wields outsized influence in Silicon Valley, tracing how social networks, shared ambition, and sexual politics intersect with venture capital and power. The piece finds no secret cabal but relays firsthand accounts of how access, status, and occasional unwanted advances can shape careers in elite tech circles. More here.
+
+The consulting giant Accenture is tracking weekly log-ins to its internal AI tools and telling some senior managers that “regular adoption” will factor into this summer’s promotion decisions. The Financial Times has more here.
+
+Microsoft’s Project Silica unveiled a laser-etched borosilicate glass chip that stores up to 4.8 terabytes and could last 10,000 years, according to a Nature paper submitted by the company. Gizmodo has more here.
+
+Amazon overtook Walmart as the world’s largest company by revenue in 2025, posting $717 billion in sales versus Walmart’s $713 billion and ending the retailer’s 13-year run at the top. Amazon’s growth in AWS, advertising, and Prime subscriptions helped push it past Walmart’s largely store-driven business. CNN has more here.
+
+Detours
+Harry Potter rival Draco Malfoy has become an unlikely Lunar New Year symbol in China because the Chinese transliteration of his name — “ma er fu” — contains the characters for “horse” and “fortune,” making him an auspicious mascot for the Year of the Horse.
+
+Baz Luhrmann’s new IMAX concert documentary EPiC: Elvis Presley in Concert stitches together footage from Elvis Presley’s 1969–76 Las Vegas residency into a rapid-fire, kaleidoscopic spectacle, revisiting the King’s late-career performances with more than 50 songs while largely sidestepping his decline.
+
+Brain Rot
+Instagram post
+Retail Therapy
+
+Image Credits: Daniel Milstein / Sotheby’s International Realty
+
+A 270-acre estate spanning 18 parcels across Connecticut and New York that was originally built for the Sulzberger family of The New York Times fame is back on the market for $75 million, featuring a 16,000-square-foot manor house, an indoor swimming pool, formal gardens with a hedge maze, private lakes, equestrian barns, a tennis court, pool house, and more than five miles of private roads and wooded trails.
+
+Arc’teryx’s sneaky good travel shoe.
+
+Tips (the non-pecuniary kind)
+Please send all of your hot gossip to connie@strictlyvc.com or alex@strictlyvc.com.
+
+Want to advertise on StrictlyVC?
+To book ads directly, contact us at advertise@techcrunch.com.
+
+Keep Reading
+
+View more
+What is StrictlyVC?
+Our free daily newsletter provides you with all the info you need to know about the VC scene in Silicon Valley and beyond. Our events bring together VCs, entrepreneurs, and corporate development execs, among others. Sign up for our newsletter today and see what you’ve been missing!
+
+Email
+Subscribe
+
+
+
