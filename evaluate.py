@@ -1,5 +1,7 @@
 import os
+import time
 import anthropic
+from anthropic import OverloadedError
 from dotenv import load_dotenv
 from db import init_db, already_seen, save_company
 import json
@@ -33,8 +35,21 @@ Description: {description}
 Evaluate the company on each dimension below."""
 
 
+def call_with_retry(fn, retries=4, delay=10):
+    """Retry an API call with exponential backoff on overload errors."""
+    for attempt in range(retries):
+        try:
+            return fn()
+        except OverloadedError:
+            if attempt == retries - 1:
+                raise
+            wait = delay * (2 ** attempt)  # 10s, 20s, 40s, 80s
+            print(f"  API overloaded, retrying in {wait}s... (attempt {attempt + 1}/{retries})")
+            time.sleep(wait)
+
+
 def extract_companies(newsletter_text: str) -> list:
-    response = client.messages.create(
+    response = call_with_retry(lambda: client.messages.create(
         model="claude-opus-4-6",
         max_tokens=4096,
         messages=[
@@ -68,14 +83,14 @@ def extract_companies(newsletter_text: str) -> list:
             }
         }],
         tool_choice={"type": "tool", "name": "save_startups"}
-    )
+    ))
 
     return response.content[0].input.get("startups", [])
 
 
 def check_dealbreakers(name: str, description: str) -> tuple[bool, dict]:
     prompt = DEALBREAKER_PROMPT.format(name=name, description=description)
-    response = client.messages.create(
+    response = call_with_retry(lambda: client.messages.create(
         model="claude-opus-4-6",
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
@@ -135,7 +150,7 @@ def check_dealbreakers(name: str, description: str) -> tuple[bool, dict]:
             }
         }],
         tool_choice={"type": "tool", "name": "save_dealbreaker_results"}
-    )
+    ))
     result = response.content[0].input
     passed = all(v["answer"] for v in result.values())
     return passed, result
@@ -143,7 +158,7 @@ def check_dealbreakers(name: str, description: str) -> tuple[bool, dict]:
 
 def generate_report(name: str, description: str, dealbreaker_results: dict) -> dict:
     prompt = REPORT_PROMPT.format(name=name, description=description)
-    response = client.messages.create(
+    response = call_with_retry(lambda: client.messages.create(
         model="claude-opus-4-6",
         max_tokens=2048,
         messages=[{"role": "user", "content": prompt}],
@@ -212,7 +227,7 @@ def generate_report(name: str, description: str, dealbreaker_results: dict) -> d
             }
         }],
         tool_choice={"type": "tool", "name": "save_report"}
-    )
+    ))
     report = response.content[0].input
     report["dealbreakers"] = dealbreaker_results
     return report
@@ -244,7 +259,7 @@ def process_newsletter(text: str, source: str = "manual"):
 
             print(f"  [{name}] Passed! Generating report...")
             report = generate_report(name, description, dealbreaker_results)
-            report["_description"] = description  # stash it in the report blob
+            report["_description"] = description
             save_company(name, source, passed=True, report=json.dumps(report))
             print(f"  [{name}] Done.")
         except Exception as e:

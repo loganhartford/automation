@@ -4,3 +4,5 @@ credentials.json
 logs/
 token.pickle
 __pycache__/
+evaluate.py
+.DS_Store
