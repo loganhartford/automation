@@ -76,6 +76,17 @@ def mark_as_read(service, message_id):
         body={"removeLabelIds": ["UNREAD"]}
     ).execute()
 
+def send_email(to_address: str, subject: str, body: str):
+    """Send a plain-text email from the scout account."""
+    service = get_service()
+    message = MIMEText(body, "plain")
+    message["Subject"] = subject
+    message["From"] = SCOUT_EMAIL
+    message["To"] = to_address
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+
+
 def send_report(to_address: str, subject: str, markdown_body: str, html_body: str = None):
     service = get_service()
 

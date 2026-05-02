@@ -1,8 +1,10 @@
+import os
 import datetime
 from flask import Flask, render_template, request, redirect, url_for
 from dotenv import load_dotenv
 from calendar_api import get_free_slots, create_booking
 from telegram_notifier import notify
+from telegram_bot import handle_message, send_telegram_message
 
 load_dotenv()
 
@@ -54,6 +56,22 @@ def booked():
     start_dt = datetime.datetime.fromisoformat(slot_str)
     end_dt = start_dt + datetime.timedelta(minutes=30)
     return render_template("booked.html", name=name, email=email, start_dt=start_dt, end_dt=end_dt)
+
+
+@app.route("/telegram-webhook", methods=["POST"])
+def telegram_webhook():
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if secret != os.getenv("WEBHOOK_SECRET", ""):
+        return "", 403
+    update = request.get_json(silent=True) or {}
+    message = update.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "").strip()
+    if chat_id and text:
+        reply = handle_message(chat_id, text)
+        if reply:
+            send_telegram_message(chat_id, reply)
+    return "", 200
 
 
 if __name__ == "__main__":

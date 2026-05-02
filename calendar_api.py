@@ -129,3 +129,61 @@ def create_booking(attendee_name, attendee_email, start_dt, end_dt, notes=""):
         body=event,
         sendUpdates="all",
     ).execute()
+
+
+def get_upcoming_bookings(days_ahead=30):
+    """List upcoming meetings on the primary calendar that have external attendees."""
+    service = get_calendar_service()
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.datetime.now(tz)
+    end = now + datetime.timedelta(days=days_ahead)
+
+    events_result = service.events().list(
+        calendarId="primary",
+        timeMin=now.isoformat(),
+        timeMax=end.isoformat(),
+        singleEvents=True,
+        orderBy="startTime",
+    ).execute()
+
+    bookings = []
+    for event in events_result.get("items", []):
+        if "dateTime" not in event.get("start", {}):
+            continue
+        external = [a for a in event.get("attendees", []) if not a.get("self")]
+        if not external:
+            continue
+        start_dt = datetime.datetime.fromisoformat(event["start"]["dateTime"]).astimezone(tz)
+        bookings.append({
+            "event_id": event["id"],
+            "summary": event.get("summary", "Meeting"),
+            "start_pt": start_dt.strftime("%a %b %-d at %-I:%M %p"),
+            "attendee_email": external[0]["email"],
+            "attendee_name": external[0].get("displayName", ""),
+        })
+
+    return bookings
+
+
+def reschedule_booking(event_id, new_start_dt, new_end_dt):
+    """Update an existing calendar event to a new time and notify attendees."""
+    service = get_calendar_service()
+    event = service.events().get(calendarId="primary", eventId=event_id).execute()
+    event["start"] = {"dateTime": new_start_dt.isoformat(), "timeZone": TIMEZONE}
+    event["end"] = {"dateTime": new_end_dt.isoformat(), "timeZone": TIMEZONE}
+    service.events().update(
+        calendarId="primary",
+        eventId=event_id,
+        body=event,
+        sendUpdates="all",
+    ).execute()
+
+
+def cancel_booking(event_id):
+    """Delete a calendar event and send cancellation notification to attendees."""
+    service = get_calendar_service()
+    service.events().delete(
+        calendarId="primary",
+        eventId=event_id,
+        sendUpdates="all",
+    ).execute()

@@ -7,8 +7,8 @@ load_dotenv()
 
 def notify(message):
     """Send a Telegram message. Silently no-ops if env vars are not set."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    token = os.getenv("TELEGRAM_SCHEDULER_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_SCHEDULER_CHAT_ID")
     if not token or not chat_id:
         return
     try:
