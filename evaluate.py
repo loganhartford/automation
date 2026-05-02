@@ -104,7 +104,7 @@ def check_dealbreakers(name: str, description: str) -> tuple[bool, dict]:
                 "properties": {
                     "developing_hardware": {
                         "type": "object",
-                        "description": "Is the company developing hardware (physical products, chips, sensors, devices, etc.)?",
+                        "description": "Is the company developing hardware (physical products, sensors, devices, robotics, etc.)? Chip design / fabless semiconductor companies do NOT qualify — this role requires hands-on embedded/firmware work, not RTL or silicon design.",
                         "properties": {
                             "answer": {"type": "boolean"},
                             "reason": {"type": "string"}
@@ -162,7 +162,7 @@ def generate_report(name: str, description: str, dealbreaker_results: dict) -> d
     prompt = REPORT_PROMPT.format(name=name, description=description)
     response = call_with_retry(lambda: client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=2048,
+        max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
         tools=[{
             "name": "save_report",
@@ -170,6 +170,22 @@ def generate_report(name: str, description: str, dealbreaker_results: dict) -> d
             "input_schema": {
                 "type": "object",
                 "properties": {
+                    "location": {
+                        "type": "object",
+                        "description": "The company's headquarters city and country. If unknown, say 'Unknown'.",
+                        "properties": {
+                            "answer": {"type": "string"}
+                        },
+                        "required": ["answer"]
+                    },
+                    "mission": {
+                        "type": "object",
+                        "description": "The company's core mission and what they're trying to achieve in the world, in 1-2 sentences.",
+                        "properties": {
+                            "answer": {"type": "string"}
+                        },
+                        "required": ["answer"]
+                    },
                     "company_size": {
                         "type": "object",
                         "description": "What is the size of the company? 30-100 people is ideal for a senior hire with meaningful equity and impact.",
@@ -223,9 +239,27 @@ def generate_report(name: str, description: str, dealbreaker_results: dict) -> d
                             "assessment": {"type": "string", "enum": ["good", "neutral", "bad"]}
                         },
                         "required": ["answer", "assessment"]
+                    },
+                    "learning_opportunities": {
+                        "type": "object",
+                        "description": "What are the most interesting technical or domain problems an engineer would work on here? What unique learning could you get that would be hard to find at most other companies?",
+                        "properties": {
+                            "answer": {"type": "string"},
+                            "assessment": {"type": "string", "enum": ["good", "neutral", "bad"]}
+                        },
+                        "required": ["answer", "assessment"]
+                    },
+                    "transferable_skills": {
+                        "type": "object",
+                        "description": "What technical skills gained here would remain valuable outside this company and into the future? Focus on skills that are durable or increasingly important given the rise of AI — e.g. rare hardware expertise, systems-level thinking, deep domain knowledge in a growing field, skills that complement rather than compete with AI.",
+                        "properties": {
+                            "answer": {"type": "string"},
+                            "assessment": {"type": "string", "enum": ["good", "neutral", "bad"]}
+                        },
+                        "required": ["answer", "assessment"]
                     }
                 },
-                "required": ["company_size", "monopoly_potential", "novelty", "breakthrough_vs_incremental", "timing", "unique_opportunity"]
+                "required": ["location", "mission", "company_size", "monopoly_potential", "novelty", "breakthrough_vs_incremental", "timing", "unique_opportunity", "learning_opportunities", "transferable_skills"]
             }
         }],
         tool_choice={"type": "tool", "name": "save_report"}

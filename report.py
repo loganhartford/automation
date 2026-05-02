@@ -18,6 +18,8 @@ REPORT_LABELS = {
     "breakthrough_vs_incremental": "Breakthrough vs Incremental",
     "timing": "Timing",
     "unique_opportunity": "Unique Opportunity",
+    "learning_opportunities": "Learning Opportunities",
+    "transferable_skills": "Transferable Skills",
 }
 
 ASSESSMENT_LABEL = {
@@ -44,7 +46,8 @@ def generate_weekly_report():
         h2 {{ font-size: 22px; margin-top: 48px; margin-bottom: 4px; }}
         h3 {{ font-size: 16px; margin-top: 24px; margin-bottom: 12px; color: #444; }}
         .meta {{ color: #888; font-size: 13px; margin-bottom: 4px; }}
-        .description {{ color: #555; font-style: italic; margin-bottom: 16px; font-size: 14px; }}
+        .description {{ color: #555; font-style: italic; margin-bottom: 8px; font-size: 14px; }}
+        .mission {{ color: #333; margin-bottom: 16px; font-size: 14px; }}
         .dealbreaker-item {{ margin-bottom: 8px; }}
         .report-item {{ margin-bottom: 20px; }}
         .report-label {{ font-weight: bold; margin-bottom: 4px; }}
@@ -64,11 +67,15 @@ def generate_weekly_report():
         report = json.loads(report_json)
         description = report.pop("_description", None)
         dealbreakers = report.pop("dealbreakers", None)
+        location = report.pop("location", {}).get("answer", "Unknown")
+        mission = report.pop("mission", {}).get("answer", None)
 
         html += f"<h2>{name}</h2>"
-        html += f'<p class="meta">First seen: {first_seen[:10]} | Source: {source}</p>'
+        html += f'<p class="meta">First seen: {first_seen[:10]} | Source: {source} | {location}</p>'
         if description:
             html += f'<p class="description">{description}</p>'
+        if mission:
+            html += f'<p class="mission">{mission}</p>'
 
         # Dealbreaker section
         if dealbreakers:
