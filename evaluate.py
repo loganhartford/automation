@@ -1,7 +1,7 @@
 import os
 import time
 import anthropic
-from anthropic import OverloadedError
+from anthropic import APIStatusError
 from dotenv import load_dotenv
 from db import init_db, already_seen, save_company
 import json
@@ -40,7 +40,9 @@ def call_with_retry(fn, retries=4, delay=10):
     for attempt in range(retries):
         try:
             return fn()
-        except OverloadedError:
+        except APIStatusError as e:
+            if e.status_code != 529:
+                raise
             if attempt == retries - 1:
                 raise
             wait = delay * (2 ** attempt)  # 10s, 20s, 40s, 80s
