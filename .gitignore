@@ -3,6 +3,7 @@ venv/
 credentials.json
 logs/
 token.pickle
+calendar_token.pickle
 __pycache__/
 evaluate.py
 .DS_Store
