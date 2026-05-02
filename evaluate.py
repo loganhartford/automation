@@ -120,37 +120,41 @@ def research_company(name: str, description_hint: str = "") -> str:
     messages = [{"role": "user", "content": prompt}]
     tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
     try:
+        accumulated = []
         while True:
             response = call_with_retry(lambda: client.messages.create(
                 model="claude-opus-4-6",
-                max_tokens=2048,
+                max_tokens=4096,
                 messages=messages,
                 tools=tools,
             ))
-            if response.stop_reason == "pause_turn":
+            block_summary = [(getattr(b, 'type', type(b).__name__), len(getattr(b, 'text', '') or '')) for b in response.content]
+            print(f"  Research response: stop_reason={response.stop_reason}, blocks={block_summary}")
+
+            last_search_idx = max(
+                (i for i, b in enumerate(response.content)
+                 if getattr(b, 'type', '') in ('web_search_tool_result', 'server_tool_use')),
+                default=-1
+            )
+            if last_search_idx >= 0:
+                # First response: take all text after the last search block (skips preamble)
+                post = [b.text for b in response.content[last_search_idx + 1:]
+                        if hasattr(b, 'text') and b.text and b.text.strip()]
+                accumulated.extend(post)
+            else:
+                # Continuation response: take all text
+                cont = [b.text for b in response.content
+                        if hasattr(b, 'text') and b.text and b.text.strip()]
+                accumulated.extend(cont)
+
+            if response.stop_reason in ("pause_turn", "max_tokens"):
                 messages.append({"role": "assistant", "content": response.content})
                 messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
                 continue
             break
-        # Debug: log block structure so we can diagnose extraction issues
-        block_summary = [(getattr(b, 'type', type(b).__name__), len(getattr(b, 'text', '') or '')) for b in response.content]
-        print(f"  Research response: stop_reason={response.stop_reason}, blocks={block_summary}")
-        # Find the first text block after the last search result block
-        last_search_idx = max(
-            (i for i, b in enumerate(response.content)
-             if getattr(b, 'type', '') in ('web_search_tool_result', 'server_tool_use')),
-            default=-1
-        )
-        print(f"  last_search_idx={last_search_idx}, total_blocks={len(response.content)}")
-        if last_search_idx >= 0:
-            for block in response.content[last_search_idx + 1:]:
-                if hasattr(block, 'text') and block.text:
-                    print(f"  Extracted text after last search ({len(block.text)} chars)")
-                    return block.text
-        # Fallback: last text block overall
-        text_blocks = [b.text for b in response.content if hasattr(b, 'text') and b.text]
-        result = text_blocks[-1] if text_blocks else ""
-        print(f"  Fallback extraction: {len(result)} chars")
+
+        result = "\n".join(accumulated)
+        print(f"  Research complete: {len(result)} chars across {len(accumulated)} text blocks")
         return result
     except Exception as e:
         print(f"  Research failed ({type(e).__name__}): {e}")
