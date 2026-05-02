@@ -64,7 +64,8 @@ def _render_company_html(name, first_seen, source, report_json):
         html += "<h3>Dealbreaker Check</h3>"
         for key, value in dealbreakers.items():
             label = DEALBREAKER_LABELS.get(key, key.replace("_", " ").title())
-            answer = "Yes" if value.get("answer") else "No"
+            raw = value.get("answer")
+            answer = "Yes" if raw == "yes" else ("⚠️ Unknown" if raw == "unknown" else "No")
             reason = value.get("reason", "")
             html += f'<div class="dealbreaker-item"><strong>{label}</strong> {answer} — {reason}</div>'
 

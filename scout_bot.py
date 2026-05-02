@@ -104,7 +104,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = []
         for key, value in dealbreaker_results.items():
             label = DEALBREAKER_LABELS.get(key, key.replace("_", " ").title())
-            icon = "✅" if value["answer"] else "❌"
+            a = value["answer"]
+            icon = "✅" if a == "yes" else ("⚠️" if a == "unknown" else "❌")
             lines.append(f"{icon} <b>{label}</b>: {value['reason']}")
         await _reply(update, "\n".join(lines))
 

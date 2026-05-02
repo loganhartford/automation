@@ -26,9 +26,9 @@ Description: {description}
 Research (web search results):
 {research_context}
 
-Use the research to inform your answers. If the research contradicts the description, trust the research. If the research is empty or unhelpful for a criterion, fall back to the description.
+Use the research to inform your answers. If the research contradicts the description, trust the research.
 
-Evaluate the company against each of the following criteria and provide a boolean answer and a one-line reason for each."""
+For each criterion, answer "yes", "no", or "unknown". Use "unknown" only when the research genuinely provides insufficient information to make a call — not as a hedge when you can make a reasonable inference. "unknown" is treated as a caution flag, not a disqualifier."""
 
 REPORT_PROMPT = """You are a startup analyst helping a senior embedded/firmware engineer evaluate companies to join.
 Write a thoughtful research report on this company. Be specific where you can, and honest about uncertainty where you can't.
@@ -102,19 +102,20 @@ def extract_companies(newsletter_text: str) -> list:
 
 def research_company(name: str, description_hint: str = "") -> str:
     prompt = (
-        f"You are researching a startup called '{name}' for a senior embedded/firmware engineer evaluating companies to join."
+        f"Research {name}."
         + (f" Additional context: {description_hint}\n\n" if description_hint else "\n\n")
-        + "The name may be ambiguous — use your search results to identify the correct company "
-        "(a hardware or deep-tech startup, not a software app, publication, or consumer brand with the same name). "
-        "If multiple companies match, use judgment to select the most likely hardware startup.\n\n"
-        "Search and compile a factual brief covering:\n"
-        "- **Product**: What exactly do they build? Is it hardware, software, or both?\n"
-        "- **Location**: HQ city and country\n"
-        "- **Headcount**: Approximate number of employees\n"
-        "- **Funding**: Stage (pre-seed/seed/Series A/B/etc.), total raised, lead investors\n"
-        "- **Growth signals**: Recent funding rounds, hiring pace, partnerships, press\n"
-        "- **Engineering work**: What firmware, embedded, or hardware engineering roles exist? What technical problems do engineers work on?\n\n"
-        "Be specific and factual. State clearly when you cannot find information on a point."
+        + "If the company name is ambiguous, search with additional context to find the right one "
+        "(looking for a hardware or deep-tech startup).\n\n"
+        "Find and return:\n"
+        "- What they specifically build and how it works\n"
+        "- Founding year and founders\n"
+        "- Funding rounds (amount, stage, investors) — check Crunchbase, TechCrunch, press releases\n"
+        "- Estimated headcount or hiring activity (LinkedIn, job postings)\n"
+        "- Customer wins, contracts, or partnerships (especially government contracts which are often public)\n"
+        "- Recent news or press coverage (frequency and recency signals momentum)\n"
+        "- Any notable milestones (product launches, pilots, deployments)\n\n"
+        "If you can't find hard metrics, report what you do find and note the gap. "
+        "Be specific and factual. Avoid generic statements about the market."
     )
     messages = [{"role": "user", "content": prompt}]
     tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
@@ -165,7 +166,7 @@ def check_dealbreakers(name: str, description: str, research_context: str = "") 
                         "type": "object",
                         "description": "Is the company developing hardware (physical products, sensors, devices, robotics, etc.)? Chip design / fabless semiconductor companies do NOT qualify — this role requires hands-on embedded/firmware work, not RTL or silicon design.",
                         "properties": {
-                            "answer": {"type": "boolean"},
+                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
                             "reason": {"type": "string"}
                         },
                         "required": ["answer", "reason"]
@@ -174,7 +175,7 @@ def check_dealbreakers(name: str, description: str, research_context: str = "") 
                         "type": "object",
                         "description": "Is this a startup (not a large established company)?",
                         "properties": {
-                            "answer": {"type": "boolean"},
+                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
                             "reason": {"type": "string"}
                         },
                         "required": ["answer", "reason"]
@@ -183,16 +184,16 @@ def check_dealbreakers(name: str, description: str, research_context: str = "") 
                         "type": "object",
                         "description": "Does the company solve a real, significant pain point?",
                         "properties": {
-                            "answer": {"type": "boolean"},
+                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
                             "reason": {"type": "string"}
                         },
                         "required": ["answer", "reason"]
                     },
                     "growing_quickly": {
                         "type": "object",
-                        "description": "Is the company growing quickly?",
+                        "description": "Is the company showing signs of growth? Look for: recent funding rounds, headcount increases, new contracts or customers, product launches, press coverage. Answer 'unknown' if research doesn't surface clear signals either way.",
                         "properties": {
-                            "answer": {"type": "boolean"},
+                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
                             "reason": {"type": "string"}
                         },
                         "required": ["answer", "reason"]
@@ -201,7 +202,7 @@ def check_dealbreakers(name: str, description: str, research_context: str = "") 
                         "type": "object",
                         "description": "Does this company have the potential to be a billion-dollar company?",
                         "properties": {
-                            "answer": {"type": "boolean"},
+                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
                             "reason": {"type": "string"}
                         },
                         "required": ["answer", "reason"]
@@ -213,7 +214,7 @@ def check_dealbreakers(name: str, description: str, research_context: str = "") 
         tool_choice={"type": "tool", "name": "save_dealbreaker_results"}
     ))
     result = response.content[0].input
-    passed = all(v["answer"] for v in result.values())
+    passed = all(v["answer"] != "no" for v in result.values())
     return passed, result
 
 
