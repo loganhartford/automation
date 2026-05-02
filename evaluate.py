@@ -102,15 +102,19 @@ def extract_companies(newsletter_text: str) -> list:
 
 def research_company(name: str, description_hint: str = "") -> str:
     prompt = (
-        f"Research the startup '{name}'."
-        + (f" Context: {description_hint}\n\n" if description_hint else "\n\n")
-        + "Return a structured brief covering:\n"
-        "- What they build and the problem they solve\n"
-        "- Company location and approximate headcount\n"
-        "- Funding stage and notable investors\n"
-        "- Recent news or growth signals\n"
-        "- What kind of firmware/embedded/hardware engineering work they do (check job listings)\n"
-        "Be concise and factual. If you can't find information on a point, say so."
+        f"You are researching a startup called '{name}' for a senior embedded/firmware engineer evaluating companies to join."
+        + (f" Additional context: {description_hint}\n\n" if description_hint else "\n\n")
+        + "The name may be ambiguous — use your search results to identify the correct company "
+        "(a hardware or deep-tech startup, not a software app, publication, or consumer brand with the same name). "
+        "If multiple companies match, use judgment to select the most likely hardware startup.\n\n"
+        "Search and compile a factual brief covering:\n"
+        "- **Product**: What exactly do they build? Is it hardware, software, or both?\n"
+        "- **Location**: HQ city and country\n"
+        "- **Headcount**: Approximate number of employees\n"
+        "- **Funding**: Stage (pre-seed/seed/Series A/B/etc.), total raised, lead investors\n"
+        "- **Growth signals**: Recent funding rounds, hiring pace, partnerships, press\n"
+        "- **Engineering work**: What firmware, embedded, or hardware engineering roles exist? What technical problems do engineers work on?\n\n"
+        "Be specific and factual. State clearly when you cannot find information on a point."
     )
     messages = [{"role": "user", "content": prompt}]
     tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
@@ -118,7 +122,7 @@ def research_company(name: str, description_hint: str = "") -> str:
         while True:
             response = call_with_retry(lambda: client.messages.create(
                 model="claude-opus-4-6",
-                max_tokens=1024,
+                max_tokens=2048,
                 messages=messages,
                 tools=tools,
             ))
@@ -127,7 +131,19 @@ def research_company(name: str, description_hint: str = "") -> str:
                 messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
                 continue
             break
-        return next((b.text for b in response.content if hasattr(b, "text")), "")
+        # Find the first text block after the last search result block
+        last_search_idx = max(
+            (i for i, b in enumerate(response.content)
+             if getattr(b, 'type', '') in ('web_search_tool_result', 'server_tool_use')),
+            default=-1
+        )
+        if last_search_idx >= 0:
+            for block in response.content[last_search_idx + 1:]:
+                if hasattr(block, 'text') and block.text:
+                    return block.text
+        # Fallback: last text block overall
+        text_blocks = [b.text for b in response.content if hasattr(b, 'text') and b.text]
+        return text_blocks[-1] if text_blocks else ""
     except Exception as e:
         print(f"  Research failed ({type(e).__name__}): {e}")
         return ""
@@ -329,6 +345,8 @@ def process_newsletter(text: str, source: str = "manual"):
 
             print(f"  [{name}] Researching...")
             research_context = research_company(name, description)
+            if not research_context:
+                print(f"  [{name}] Warning: research returned nothing, evaluating without web data.")
 
             print(f"  [{name}] Checking dealbreakers...")
             passed, dealbreaker_results = check_dealbreakers(name, description, research_context)
