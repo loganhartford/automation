@@ -1,4 +1,10 @@
-# Startup Scout
+# Automation
+
+Two tools running on a shared DigitalOcean droplet (Ubuntu 24.04, 1GB RAM, `167.172.204.113`) under the `scout` user.
+
+---
+
+## 1. Startup Scout
 
 Automated pipeline that monitors forwarded newsletters, evaluates mentioned startups against a set of criteria, and emails a weekly report every Saturday at 7am.
 
@@ -131,3 +137,78 @@ To add or change a dealbreaker or report field, update both the prompt descripti
 **Report shows no new companies** — either nothing passed the dealbreakers this week, or the report already ran and marked everything as notified. Run `python3 reset_reports.py` to reset and re-send.
 
 **API errors in logs** — check your Anthropic billing at console.anthropic.com. Credits may have run out.
+
+---
+
+## 2. Scheduler (meet.lhartford.com)
+
+Self-hosted Calendly replacement. Visitors pick a 30-minute slot from real availability (Mon–Fri 10am–3pm PT, checked against all Google calendars), and a Google Calendar event is created automatically with an invite sent to the booker.
+
+### How It Works
+
+1. Someone visits `https://meet.lhartford.com` and picks an available slot
+2. They fill in their name, email, and optional notes
+3. A Google Calendar event (`Logan Hartford <> Name`) is created with a 5-min popup reminder on Logan's side only
+4. The booker receives a calendar invite; Logan gets a Telegram notification
+5. Logan can reply to the Telegram bot to reschedule, cancel, or email the participant — powered by a Claude agent
+
+### Project Structure
+
+```
+├── schedule.py           # Flask app: booking page, form handler, Telegram webhook
+├── calendar_api.py       # Google Calendar: free slots, create/reschedule/cancel bookings
+├── telegram_bot.py       # Claude agent for two-way Telegram control
+├── telegram_notifier.py  # One-way Telegram notification on new bookings
+├── templates/
+│   ├── book.html         # Booking page UI
+│   └── booked.html       # Confirmation page
+└── calendar_token.pickle # Google Calendar OAuth token (never commit)
+```
+
+### Required Secrets
+
+Add to `.env`:
+```
+ANTHROPIC_API_KEY=...
+TELEGRAM_SCHEDULER_BOT_TOKEN=...
+TELEGRAM_SCHEDULER_CHAT_ID=...
+WEBHOOK_SECRET=...
+```
+
+`calendar_token.pickle` — generated locally via OAuth flow, then scp'd to server:
+```bash
+python3 -c "from calendar_api import get_calendar_service; get_calendar_service()"
+scp calendar_token.pickle scout@167.172.204.113:~/automation/
+```
+
+### Deployment
+
+Runs as a systemd user service (`scout-schedule`) via gunicorn on port 5001, proxied through Nginx with Let's Encrypt HTTPS.
+
+```bash
+systemctl --user restart scout-schedule
+journalctl --user -u scout-schedule -n 50  # logs
+```
+
+### Telegram Webhook Registration (run once after token changes)
+
+```bash
+python3 -c "
+import os, requests
+from dotenv import load_dotenv
+load_dotenv()
+r = requests.post(
+    f'https://api.telegram.org/bot{os.getenv(\"TELEGRAM_SCHEDULER_BOT_TOKEN\")}/setWebhook',
+    data={'url': 'https://meet.lhartford.com/telegram-webhook', 'secret_token': os.getenv('WEBHOOK_SECRET')}
+)
+print(r.json())
+"
+```
+
+### Troubleshooting
+
+**Booking page shows no slots** — Calendar token may have expired. Re-run the OAuth flow locally and scp the new `calendar_token.pickle` to the server.
+
+**Telegram bot not responding** — Check logs: `journalctl --user -u scout-schedule -n 50`. Confirm webhook is registered: `https://api.telegram.org/bot<TOKEN>/getWebhookInfo`.
+
+**Google Calendar API disabled** — Enable it at console.cloud.google.com → startup-scout project → APIs & Services.
