@@ -113,7 +113,7 @@ def create_booking(attendee_name, attendee_email, start_dt, end_dt, notes=""):
     service = get_calendar_service()
 
     event = {
-        "summary": f"Meeting with {attendee_name}",
+        "summary": f"Logan Hartford <> {attendee_name}",
         "description": notes or "",
         "start": {"dateTime": start_dt.isoformat(), "timeZone": TIMEZONE},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": TIMEZONE},
