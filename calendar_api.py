@@ -118,17 +118,23 @@ def create_booking(attendee_name, attendee_email, start_dt, end_dt, notes=""):
         "start": {"dateTime": start_dt.isoformat(), "timeZone": TIMEZONE},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": TIMEZONE},
         "attendees": [{"email": attendee_email, "displayName": attendee_name}],
-        "reminders": {
-            "useDefault": False,
-            "overrides": [{"method": "popup", "minutes": 5}],
-        },
+        "reminders": {"useDefault": False, "overrides": []},
     }
 
-    return service.events().insert(
+    created = service.events().insert(
         calendarId="primary",
         body=event,
         sendUpdates="all",
     ).execute()
+
+    # Patch only the organizer's personal reminder — does not affect attendees
+    service.events().patch(
+        calendarId="primary",
+        eventId=created["id"],
+        body={"reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 5}]}},
+    ).execute()
+
+    return created
 
 
 def get_upcoming_bookings(days_ahead=30):
