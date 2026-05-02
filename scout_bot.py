@@ -35,18 +35,6 @@ REPORT_LABELS = {
 ASSESSMENT_EMOJI = {"good": "🟢", "neutral": "🟡", "bad": "🔴"}
 
 
-def lookup_company(name: str) -> str:
-    response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=256,
-        messages=[{
-            "role": "user",
-            "content": f"In one sentence, describe what the company '{name}' does and what problem it solves. If you're not familiar with it, say so briefly."
-        }]
-    )
-    return response.content[0].text.strip()
-
-
 def _format_report(name: str, report: dict) -> str:
     location = report.pop("location", {}).get("answer", "Unknown")
     mission = report.pop("mission", {}).get("answer", "")
@@ -92,7 +80,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("On it...")
 
     try:
-        from evaluate import check_dealbreakers, generate_report
+        from evaluate import check_dealbreakers, generate_report, research_company
         from db import init_db, already_seen, save_company
         from report import send_single_company_report
 
@@ -102,12 +90,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _reply(update, f"⚠️ <b>{name}</b> is already in the database.")
             return
 
-        await _reply(update, f"Looking up <b>{name}</b>...")
-        description = lookup_company(name)
+        await update.message.reply_text("Researching...")
+        research_context = research_company(name)
+        description = research_context.split("\n\n")[0] if research_context else f"No information found for {name}."
         await _reply(update, f"<i>{description}</i>")
 
         await update.message.reply_text("Checking dealbreakers...")
-        passed, dealbreaker_results = check_dealbreakers(name, description)
+        passed, dealbreaker_results = check_dealbreakers(name, description, research_context)
 
         lines = []
         for key, value in dealbreaker_results.items():
@@ -122,7 +111,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         await update.message.reply_text("✅ Passed! Generating report...")
-        report = generate_report(name, description, dealbreaker_results)
+        report = generate_report(name, description, dealbreaker_results, research_context)
         report["_description"] = description
         save_company(name, source="telegram", passed=True, report=json.dumps(report))
 

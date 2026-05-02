@@ -23,6 +23,11 @@ DEALBREAKER_PROMPT = """You are evaluating a startup to see if it's worth deeper
 Company: {name}
 Description: {description}
 
+Research (web search results):
+{research_context}
+
+Use the research to inform your answers. If the research contradicts the description, trust the research. If the research is empty or unhelpful for a criterion, fall back to the description.
+
 Evaluate the company against each of the following criteria and provide a boolean answer and a one-line reason for each."""
 
 REPORT_PROMPT = """You are a startup analyst helping a senior embedded/firmware engineer evaluate companies to join.
@@ -31,6 +36,11 @@ Keep each answer to 2-3 sentences maximum. Be direct and avoid filler phrases.
 
 Company: {name}
 Description: {description}
+
+Research (web search results):
+{research_context}
+
+Use the research to populate factual fields (location, company size, funding stage, recent news). Cite specific facts from the research where possible. For fields where the research provides no data, reason from first principles and explicitly note the uncertainty.
 
 Evaluate the company on each dimension below."""
 
@@ -90,8 +100,41 @@ def extract_companies(newsletter_text: str) -> list:
     return response.content[0].input.get("startups", [])
 
 
-def check_dealbreakers(name: str, description: str) -> tuple[bool, dict]:
-    prompt = DEALBREAKER_PROMPT.format(name=name, description=description)
+def research_company(name: str, description_hint: str = "") -> str:
+    prompt = (
+        f"Research the startup '{name}'."
+        + (f" Context: {description_hint}\n\n" if description_hint else "\n\n")
+        + "Return a structured brief covering:\n"
+        "- What they build and the problem they solve\n"
+        "- Company location and approximate headcount\n"
+        "- Funding stage and notable investors\n"
+        "- Recent news or growth signals\n"
+        "- What kind of firmware/embedded/hardware engineering work they do (check job listings)\n"
+        "Be concise and factual. If you can't find information on a point, say so."
+    )
+    messages = [{"role": "user", "content": prompt}]
+    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+    try:
+        while True:
+            response = call_with_retry(lambda: client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=1024,
+                messages=messages,
+                tools=tools,
+            ))
+            if response.stop_reason == "pause_turn":
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
+                continue
+            break
+        return next((b.text for b in response.content if hasattr(b, "text")), "")
+    except Exception as e:
+        print(f"  Research failed: {e}")
+        return ""
+
+
+def check_dealbreakers(name: str, description: str, research_context: str = "") -> tuple[bool, dict]:
+    prompt = DEALBREAKER_PROMPT.format(name=name, description=description, research_context=research_context or "No research available.")
     response = call_with_retry(lambda: client.messages.create(
         model="claude-opus-4-6",
         max_tokens=1024,
@@ -158,8 +201,8 @@ def check_dealbreakers(name: str, description: str) -> tuple[bool, dict]:
     return passed, result
 
 
-def generate_report(name: str, description: str, dealbreaker_results: dict) -> dict:
-    prompt = REPORT_PROMPT.format(name=name, description=description)
+def generate_report(name: str, description: str, dealbreaker_results: dict, research_context: str = "") -> dict:
+    prompt = REPORT_PROMPT.format(name=name, description=description, research_context=research_context or "No research available.")
     response = call_with_retry(lambda: client.messages.create(
         model="claude-opus-4-6",
         max_tokens=4096,
@@ -284,8 +327,11 @@ def process_newsletter(text: str, source: str = "manual"):
                 print(f"  [{name}] Already in database, skipping.")
                 continue
 
+            print(f"  [{name}] Researching...")
+            research_context = research_company(name, description)
+
             print(f"  [{name}] Checking dealbreakers...")
-            passed, dealbreaker_results = check_dealbreakers(name, description)
+            passed, dealbreaker_results = check_dealbreakers(name, description, research_context)
 
             if not passed:
                 failed = [k for k, v in dealbreaker_results.items() if not v["answer"]]
@@ -294,7 +340,7 @@ def process_newsletter(text: str, source: str = "manual"):
                 continue
 
             print(f"  [{name}] Passed! Generating report...")
-            report = generate_report(name, description, dealbreaker_results)
+            report = generate_report(name, description, dealbreaker_results, research_context)
             report["_description"] = description
             save_company(name, source, passed=True, report=json.dumps(report))
             print(f"  [{name}] Done.")
