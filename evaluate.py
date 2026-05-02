@@ -129,7 +129,7 @@ def research_company(name: str, description_hint: str = "") -> str:
             break
         return next((b.text for b in response.content if hasattr(b, "text")), "")
     except Exception as e:
-        print(f"  Research failed: {e}")
+        print(f"  Research failed ({type(e).__name__}): {e}")
         return ""
 
 
