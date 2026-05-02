@@ -51,6 +51,26 @@ def get_unreported_companies():
     conn.close()
     return rows
 
+def get_recent_companies(limit=None):
+    conn = sqlite3.connect(DB_PATH)
+    query = "SELECT name, source, report FROM companies ORDER BY id DESC"
+    if limit:
+        query += f" LIMIT {int(limit)}"
+    rows = conn.execute(query).fetchall()
+    conn.close()
+    return rows
+
+
+def update_company(name, passed, report=None):
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE companies SET passed_dealbreakers=?, report=?, notified_date=NULL WHERE LOWER(name)=LOWER(?)",
+        (int(passed), report, name)
+    )
+    conn.commit()
+    conn.close()
+
+
 def mark_as_reported(names: list):
     conn = sqlite3.connect(DB_PATH)
     now = datetime.now().isoformat()
