@@ -1,5 +1,6 @@
-from gmail import get_service, get_unread_emails, mark_as_read
+from gmail import get_service, get_unread_emails, mark_as_read, send_report
 from evaluate import process_newsletter
+import anthropic
 import traceback
 
 def ingest():
@@ -24,9 +25,22 @@ def ingest():
 if __name__ == "__main__":
     try:
         ingest()
+    except anthropic.BadRequestError as e:
+        if "credit balance" in str(e):
+            send_report(
+                to_address="logan.hartford@outlook.com",
+                subject="Startup Scout - Out of API Credits",
+                markdown_body="Anthropic API credit balance is too low. Top up at https://console.anthropic.com/settings/billing to resume processing."
+            )
+            print("Out of Anthropic credits — alert sent.")
+        else:
+            send_report(
+                to_address="logan.hartford@outlook.com",
+                subject="Startup Scout - Ingest Failed",
+                markdown_body=f"ingest.py crashed with the following error:\n\n{traceback.format_exc()}"
+            )
+            raise
     except Exception as e:
-        # send yourself an alert email
-        from gmail import send_report
         send_report(
             to_address="logan.hartford@outlook.com",
             subject="Startup Scout - Ingest Failed",
