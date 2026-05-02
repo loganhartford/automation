@@ -132,19 +132,26 @@ def research_company(name: str, description_hint: str = "") -> str:
                 messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
                 continue
             break
+        # Debug: log block structure so we can diagnose extraction issues
+        block_summary = [(getattr(b, 'type', type(b).__name__), len(getattr(b, 'text', '') or '')) for b in response.content]
+        print(f"  Research response: stop_reason={response.stop_reason}, blocks={block_summary}")
         # Find the first text block after the last search result block
         last_search_idx = max(
             (i for i, b in enumerate(response.content)
              if getattr(b, 'type', '') in ('web_search_tool_result', 'server_tool_use')),
             default=-1
         )
+        print(f"  last_search_idx={last_search_idx}, total_blocks={len(response.content)}")
         if last_search_idx >= 0:
             for block in response.content[last_search_idx + 1:]:
                 if hasattr(block, 'text') and block.text:
+                    print(f"  Extracted text after last search ({len(block.text)} chars)")
                     return block.text
         # Fallback: last text block overall
         text_blocks = [b.text for b in response.content if hasattr(b, 'text') and b.text]
-        return text_blocks[-1] if text_blocks else ""
+        result = text_blocks[-1] if text_blocks else ""
+        print(f"  Fallback extraction: {len(result)} chars")
+        return result
     except Exception as e:
         print(f"  Research failed ({type(e).__name__}): {e}")
         return ""
@@ -368,9 +375,50 @@ def process_newsletter(text: str, source: str = "manual"):
             continue
 
 
+def evaluate_company(name: str):
+    """Evaluate a single company by name. Prints research, dealbreakers, and report."""
+    init_db()
+    print(f"\n=== Researching {name} ===")
+    research_context = research_company(name)
+    if research_context:
+        print(f"\n--- Research Brief ({len(research_context)} chars) ---")
+        print(research_context)
+    else:
+        print("WARNING: Research returned nothing.")
+
+    description = research_context.split("\n\n")[0].strip() if research_context else name
+
+    print(f"\n=== Dealbreakers ===")
+    passed, dealbreaker_results = check_dealbreakers(name, description, research_context)
+    for key, value in dealbreaker_results.items():
+        icon = "✅" if value["answer"] == "yes" else ("⚠️ " if value["answer"] == "unknown" else "❌")
+        print(f"{icon} {key}: {value['reason']}")
+
+    if not passed:
+        print(f"\nDid not pass dealbreakers.")
+        return
+
+    print(f"\n=== Report ===")
+    report = generate_report(name, description, dealbreaker_results, research_context)
+    location = report.get("location", {}).get("answer", "Unknown")
+    mission = report.get("mission", {}).get("answer", "")
+    print(f"Location: {location}")
+    if mission:
+        print(f"Mission: {mission}")
+    for key, value in report.items():
+        if not isinstance(value, dict) or "answer" not in value or key in ("location", "mission"):
+            continue
+        assessment = value.get("assessment", "").upper()
+        print(f"\n[{assessment}] {key.replace('_', ' ').title()}")
+        print(value["answer"])
+
+
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 and sys.argv[1] == "--company":
+        # Usage: python evaluate.py --company "Ulysses"
+        evaluate_company(" ".join(sys.argv[2:]))
+    elif len(sys.argv) > 1:
         # Usage: python evaluate.py newsletter.txt
         with open(sys.argv[1], "r") as f:
             text = f.read()

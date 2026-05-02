@@ -94,6 +94,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         research_context = research_company(name)
         if not research_context:
             await update.message.reply_text("⚠️ Research failed — evaluating without web data.")
+        else:
+            await update.message.reply_text(f"Research complete ({len(research_context)} chars)")
         paragraphs = [p.strip() for p in research_context.split("\n\n") if p.strip()] if research_context else []
         description = paragraphs[0] if paragraphs else f"No information found for {name}."
         await _reply(update, f"<i>{description}</i>")
