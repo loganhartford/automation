@@ -4,6 +4,167 @@ Two tools running on a shared DigitalOcean droplet (Ubuntu 24.04, 1GB RAM, `167.
 
 ---
 
+## Migrating to a New Linux Machine
+
+### 1. Transfer secrets from the old server
+
+These files are not in git and must be copied manually:
+
+```bash
+scp scout@167.172.204.113:~/automation/.env ./
+scp scout@167.172.204.113:~/automation/credentials.json ./
+scp scout@167.172.204.113:~/automation/token.pickle ./
+scp scout@167.172.204.113:~/automation/calendar_token.pickle ./
+scp scout@167.172.204.113:~/automation/scout.db ./  # only if you want to keep history
+```
+
+### 2. Set up the new machine
+
+```bash
+# Install system dependencies
+sudo apt update && sudo apt install -y python3 python3-pip python3-venv nginx certbot python3-certbot-nginx
+
+# Create user and enable linger (so systemd services run without login)
+sudo adduser scout
+sudo loginctl enable-linger scout
+
+# Switch to scout user for everything below
+sudo su - scout
+```
+
+### 3. Clone the repo and install dependencies
+
+```bash
+git clone <repo-url> ~/automation
+cd ~/automation
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+mkdir -p logs
+```
+
+### 4. Copy secrets onto the new machine
+
+```bash
+# From your Mac, scp the files you pulled in step 1
+scp .env credentials.json token.pickle calendar_token.pickle scout@<NEW_IP>:~/automation/
+scp scout.db scout@<NEW_IP>:~/automation/  # if migrating history
+```
+
+### 5. Set up systemd user services
+
+Create `~/.config/systemd/user/scout-ingest.service`:
+```ini
+[Unit]
+Description=Scout Ingest
+
+[Service]
+WorkingDirectory=/home/scout/automation
+ExecStart=/home/scout/automation/venv/bin/python3 ingest.py
+```
+
+Create `~/.config/systemd/user/scout-ingest.timer`:
+```ini
+[Unit]
+Description=Run scout ingest hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Create `~/.config/systemd/user/scout-report.timer` and `scout-report.service` similarly (runs `report.py` daily at 7am: `OnCalendar=*-*-* 07:00:00`).
+
+Create `~/.config/systemd/user/scout-schedule.service`:
+```ini
+[Unit]
+Description=Scout Scheduling App
+
+[Service]
+WorkingDirectory=/home/scout/automation
+ExecStart=/home/scout/automation/venv/bin/gunicorn -w 1 -b 127.0.0.1:5001 schedule:app
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Enable everything:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now scout-ingest.timer scout-report.timer scout-schedule
+```
+
+### 6. Configure Nginx
+
+```bash
+sudo nano /etc/nginx/sites-available/meet
+```
+
+```nginx
+server {
+    listen 80;
+    server_name meet.lhartford.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:5001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/meet /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### 7. Get a new HTTPS certificate
+
+```bash
+sudo certbot --nginx -d meet.lhartford.com
+```
+
+### 8. Update DNS
+
+In Cloudflare, update the `meet` A record to point to the new machine's IP.
+
+### 9. Re-register the Telegram webhook
+
+Once the new server is live and DNS has propagated, re-register the webhook (run from Mac):
+
+```bash
+cd ~/Documents/GitHub/automation && source venv/bin/activate
+python3 -c "
+import os, requests
+from dotenv import load_dotenv
+load_dotenv()
+r = requests.post(
+    f'https://api.telegram.org/bot{os.getenv(\"TELEGRAM_SCHEDULER_BOT_TOKEN\")}/setWebhook',
+    data={'url': 'https://meet.lhartford.com/telegram-webhook', 'secret_token': os.getenv('WEBHOOK_SECRET')}
+)
+print(r.json())
+"
+```
+
+### 10. Verify
+
+```bash
+# Check all services are running
+systemctl --user status scout-ingest.timer scout-report.timer scout-schedule
+
+# Check scheduler is reachable
+curl -I https://meet.lhartford.com
+
+# Tail logs
+journalctl --user -u scout-schedule -f
+```
+
+---
+
 ## 1. Startup Scout
 
 Automated pipeline that monitors forwarded newsletters, evaluates mentioned startups against a set of criteria, and emails a weekly report every Saturday at 7am.

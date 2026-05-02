@@ -92,7 +92,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("Researching...")
         research_context = research_company(name)
-        description = research_context.split("\n\n")[0] if research_context else f"No information found for {name}."
+        paragraphs = [p.strip() for p in research_context.split("\n\n") if p.strip()] if research_context else []
+        description = paragraphs[0] if paragraphs else f"No information found for {name}."
         await _reply(update, f"<i>{description}</i>")
 
         await update.message.reply_text("Checking dealbreakers...")
