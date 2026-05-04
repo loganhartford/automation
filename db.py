@@ -51,12 +51,19 @@ def get_unreported_companies():
     conn.close()
     return rows
 
-def get_recent_companies(limit=None):
+def get_recent_companies(limit=None, before=None):
     conn = sqlite3.connect(DB_PATH)
-    query = "SELECT name, source, report FROM companies ORDER BY id DESC"
+    conditions, params = [], []
+    if before:
+        conditions.append("first_seen < ?")
+        params.append(before)
+    query = "SELECT name, source, report FROM companies"
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY id DESC"
     if limit:
         query += f" LIMIT {int(limit)}"
-    rows = conn.execute(query).fetchall()
+    rows = conn.execute(query, params).fetchall()
     conn.close()
     return rows
 

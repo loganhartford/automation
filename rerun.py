@@ -1,19 +1,22 @@
 """Re-evaluate companies already in the database.
 
 Usage:
-    python3 rerun.py              # re-run all companies
-    python3 rerun.py 10           # re-run 10 most recent
-    python3 rerun.py 10 --summary # include per-company breakdown at the end
+    python3 rerun.py                          # re-run all companies
+    python3 rerun.py 25                       # re-run 25 most recent
+    python3 rerun.py 25 --summary             # include per-company breakdown
+    python3 rerun.py 25 --email               # send report email when done
+    python3 rerun.py --before 2026-05-01      # re-run all companies added before May 1
+    python3 rerun.py --before 2026-05-01 --email --summary
 """
 import json
 import sys
 from db import init_db, get_recent_companies, update_company
-from evaluate import research_company, check_dealbreakers, generate_report, _reset_usage, _current_cost
+from evaluate import research_company, check_dealbreakers, generate_report, research_for_report, _reset_usage, _current_cost
 
 
-def rerun(limit=None, summary=False):
+def rerun(limit=None, before=None, summary=False, email=False):
     init_db()
-    companies = get_recent_companies(limit=limit)
+    companies = get_recent_companies(limit=limit, before=before)
     if not companies:
         print("No companies in database.")
         return
@@ -52,8 +55,11 @@ def rerun(limit=None, summary=False):
                 print(f"  -> Failed dealbreakers, updating db.\n")
                 update_company(name, passed=False)
             else:
+                print(f"  Researching for report...")
+                report_context = research_for_report(name, research_context)
+
                 print(f"  Generating report...")
-                report = generate_report(name, description, dealbreaker_results, research_context)
+                report = generate_report(name, description, dealbreaker_results, report_context)
                 report["_description"] = description
                 update_company(name, passed=True, report=json.dumps(report))
 
@@ -81,10 +87,23 @@ def rerun(limit=None, summary=False):
             print(f"  {name:<{name_w}}  {outcome:<{outcome_w}}  ${cost:.4f}")
         print(f"  {'TOTAL':<{name_w}}  {'':<{outcome_w}}  ${total:.4f}")
 
+    if email:
+        print("\nSending report email...")
+        from report import generate_weekly_report
+        generate_weekly_report()
+
 
 if __name__ == "__main__":
     args = sys.argv[1:]
     show_summary = "--summary" in args or "-s" in args
-    args = [a for a in args if a not in ("--summary", "-s")]
+    send_email   = "--email"   in args or "-e" in args
+    args = [a for a in args if a not in ("--summary", "-s", "--email", "-e")]
+
+    before = None
+    if "--before" in args:
+        idx = args.index("--before")
+        before = args[idx + 1]
+        args = args[:idx] + args[idx + 2:]
+
     limit = int(args[0]) if args else None
-    rerun(limit=limit, summary=show_summary)
+    rerun(limit=limit, before=before, summary=show_summary, email=send_email)

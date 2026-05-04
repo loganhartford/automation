@@ -50,8 +50,8 @@ DEALBREAKER_SPECS = {
         "search_guidance": "Search for founding year, total headcount (LinkedIn, Crunchbase), and latest funding round stage.",
     },
     "billion_dollar_potential": {
-        "question": "Does this company have billion-dollar potential? Consider total addressable market size, strategic differentiation, and total funding raised (large raises signal investor conviction).",
-        "search_guidance": "Search for TAM estimates, total funding raised and investors, and analyst commentary on the space.",
+        "question": "Does this company have billion-dollar potential? Focus on: (1) total addressable market size — is the problem space worth billions?, (2) strategic differentiation — does the company have a defensible moat, proprietary technology, or network effects?, (3) real traction — named customers, deployments, contracts, or partnerships that validate the market. Do NOT use funding size as a negative signal — early-stage hardware companies routinely raise small seed rounds and still reach billion-dollar outcomes. A $3-5M seed is completely normal. Only flag funding as a concern if the company has been around many years with no institutional backing at all.",
+        "search_guidance": "Search for market size estimates for the problem they solve, any named customers or deployments, and what makes their approach defensible or unique.",
     },
     "growing_quickly": {
         "question": "Is this company growing quickly? Look for recent funding rounds (last 18 months), headcount growth, new customer wins, contracts, product launches, or high-frequency recent press.",
@@ -69,7 +69,28 @@ Use ONE web search. Find: what they actually build (specific product/technology)
 
 If the company name is ambiguous, search with context to find the hardware/deep-tech startup, not an unrelated business with the same name.
 
-Return a concise factual summary (150–250 words)."""
+Return a concise factual summary (150–200 words)."""
+
+PREFILTER_PROMPT = """You are doing a quick pre-screening of a startup to decide whether it might be a hardware company worth researching further.
+
+Company: {name}
+Description: {description}
+
+Question: Could this company be developing physical hardware (sensors, devices, robots, vehicles, industrial equipment, medical devices, consumer electronics, or any other physical product)?
+
+Return "no" ONLY if the description makes it unmistakably obvious this is a pure software/services company with no physical product — for example: "online payments platform", "HR software", "legal automation tool", "social media app", "SaaS analytics dashboard".
+
+If there is ANY doubt — biotech, medtech, defense, energy, manufacturing, or anything that could involve a physical component — return "unknown".
+
+When in doubt, always return "unknown". A false pass costs a few cents. A false reject loses a good company."""
+
+DEALBREAKER_MODELS = {
+    "developing_hardware":      "claude-haiku-4-5-20251001",
+    "is_startup":               "claude-haiku-4-5-20251001",
+    "billion_dollar_potential": "claude-sonnet-4-6",
+    "growing_quickly":          "claude-haiku-4-5-20251001",
+    "solves_real_problem":      "claude-haiku-4-5-20251001",
+}
 
 DEALBREAKER_EVAL_PROMPT = """You are evaluating a startup for a senior embedded/firmware engineer considering companies to join.
 
@@ -170,7 +191,7 @@ def _agentic_search_loop(messages, tools, max_tokens, model="claude-sonnet-4-6")
 
 def extract_companies(newsletter_text: str) -> list:
     response = call_with_retry(lambda: client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=4096,
         messages=[
             {"role": "user", "content": EXTRACTION_PROMPT + "\n\nNewsletter:\n" + newsletter_text}
@@ -222,6 +243,34 @@ def discover_company(name: str, description_hint: str = "") -> str:
         return ""
 
 
+def prefilter_hardware(name: str, description: str) -> str:
+    """Cheap Haiku call (no web search) to reject obviously non-hardware companies.
+    Returns 'no' or 'unknown' only — never 'yes'."""
+    prompt = PREFILTER_PROMPT.format(name=name, description=description)
+    try:
+        response = call_with_retry(lambda: client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=16,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[{
+                "name": "submit_prefilter",
+                "description": "Submit your pre-filter answer.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "answer": {"type": "string", "enum": ["no", "unknown"]}
+                    },
+                    "required": ["answer"]
+                }
+            }],
+            tool_choice={"type": "tool", "name": "submit_prefilter"},
+        ))
+        return response.content[0].input.get("answer", "unknown")
+    except Exception as e:
+        print(f"  Pre-filter failed ({type(e).__name__}): {e}")
+        return "unknown"
+
+
 def evaluate_dealbreaker(name: str, discovery_context: str, dealbreaker_key: str) -> dict:
     spec = DEALBREAKER_SPECS[dealbreaker_key]
     prompt = DEALBREAKER_EVAL_PROMPT.format(
@@ -246,10 +295,11 @@ def evaluate_dealbreaker(name: str, discovery_context: str, dealbreaker_key: str
             }
         }
     ]
+    model = DEALBREAKER_MODELS.get(dealbreaker_key, "claude-sonnet-4-6")
     try:
         while True:
             response = call_with_retry(lambda: client.messages.create(
-                model="claude-sonnet-4-6",
+                model=model,
                 max_tokens=1024,
                 messages=messages,
                 tools=tools,
@@ -275,12 +325,25 @@ def evaluate_dealbreaker(name: str, discovery_context: str, dealbreaker_key: str
 
 def check_dealbreakers_sequential(name: str, description: str, discovery_context: str) -> tuple[bool, dict]:
     results = {}
+
+    if description:
+        prefilter = prefilter_hardware(name, description)
+        if prefilter == "no":
+            print(f"  [{name}] Pre-filter: unmistakably non-hardware. Skipping.")
+            results = {k: {"answer": "unknown", "reason": "Not evaluated (pre-filter rejected as non-hardware)."} for k in DEALBREAKER_ORDER}
+            results["developing_hardware"] = {"answer": "no", "reason": "Description-only pre-filter: unmistakably non-hardware."}
+            return False, results
+
     for key in DEALBREAKER_ORDER:
         print(f"  [{name}] Evaluating {key}...")
         result = evaluate_dealbreaker(name, discovery_context, key)
         results[key] = result
-        if result["answer"] == "no":
-            print(f"  [{name}] Failed {key}: {result['reason']}. Aborting.")
+        fail = result["answer"] == "no" or (key in ("developing_hardware", "is_startup") and result["answer"] == "unknown")
+        if fail:
+            if result["answer"] == "unknown":
+                print(f"  [{name}] Could not confirm hardware — treating as fail. Aborting.")
+            else:
+                print(f"  [{name}] Failed {key}: {result['reason']}. Aborting.")
             for remaining in DEALBREAKER_ORDER:
                 if remaining not in results:
                     results[remaining] = {"answer": "unknown", "reason": "Not evaluated (earlier dealbreaker failed)."}
