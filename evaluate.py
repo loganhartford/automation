@@ -18,18 +18,6 @@ Rules:
 - If a company is mentioned multiple times, include it only once
 - If no startups are found, return an empty array"""
 
-DEALBREAKER_PROMPT = """You are evaluating a startup to see if it's worth deeper research for a senior embedded/firmware engineer looking to join a hardware startup.
-
-Company: {name}
-Description: {description}
-
-Research (web search results):
-{research_context}
-
-Use the research to inform your answers. If the research contradicts the description, trust the research.
-
-For each criterion, answer "yes", "no", or "unknown". Use "unknown" only when the research genuinely provides insufficient information to make a call — not as a hedge when you can make a reasonable inference. "unknown" is treated as a caution flag, not a disqualifier."""
-
 REPORT_PROMPT = """You are a startup analyst helping a senior embedded/firmware engineer evaluate companies to join.
 Write a thoughtful research report on this company. Be specific where you can, and honest about uncertainty where you can't.
 Keep each answer to 2-3 sentences maximum. Be direct and avoid filler phrases.
@@ -44,12 +32,98 @@ Use the research to populate factual fields (location, company size, funding sta
 
 Evaluate the company on each dimension below."""
 
+DEALBREAKER_ORDER = [
+    "developing_hardware",
+    "is_startup",
+    "billion_dollar_potential",
+    "growing_quickly",
+    "solves_real_problem",
+]
+
+DEALBREAKER_SPECS = {
+    "developing_hardware": {
+        "question": "Is this company developing physical hardware — sensors, devices, robotics, or physical systems? Chip design and fabless semiconductor companies do NOT qualify.",
+        "search_guidance": "Search for what physical products they build, hardware demos, product pages, or firmware/embedded job postings. Confirm or rule out chip design/fabless if unclear.",
+    },
+    "is_startup": {
+        "question": "Is this a startup — not a large established company? Look for founding year (ideally post-2015), headcount (ideally under ~500), and funding stage (ideally pre-Series C).",
+        "search_guidance": "Search for founding year, total headcount (LinkedIn, Crunchbase), and latest funding round stage.",
+    },
+    "billion_dollar_potential": {
+        "question": "Does this company have billion-dollar potential? Consider total addressable market size, strategic differentiation, and total funding raised (large raises signal investor conviction).",
+        "search_guidance": "Search for TAM estimates, total funding raised and investors, and analyst commentary on the space.",
+    },
+    "growing_quickly": {
+        "question": "Is this company growing quickly? Look for recent funding rounds (last 18 months), headcount growth, new customer wins, contracts, product launches, or high-frequency recent press.",
+        "search_guidance": "Search for the most recent funding round date/amount, headcount on LinkedIn, and any news from the last 12–18 months.",
+    },
+    "solves_real_problem": {
+        "question": "Does this company solve a real, significant pain point with clear customer demand? Look for named customers, contracts, pilots, or explicit customer validation.",
+        "search_guidance": "Search for named customer wins, pilot programs, government contracts, partnerships, or direct customer quotes.",
+    },
+}
+
+DISCOVERY_PROMPT = """Research {name}.{context_hint}
+
+Use ONE web search. Find: what they actually build (specific product/technology), founding year, funding stage, approximate size, and the problem they solve.
+
+If the company name is ambiguous, search with context to find the hardware/deep-tech startup, not an unrelated business with the same name.
+
+Return a concise factual summary (150–250 words)."""
+
+DEALBREAKER_EVAL_PROMPT = """You are evaluating a startup for a senior embedded/firmware engineer considering companies to join.
+
+Company: {name}
+Discovery summary: {discovery_context}
+
+Your task: answer one specific question about this company.
+
+Question: {question}
+
+Search guidance: {search_guidance}
+
+You have up to 2 web searches. Search only if the discovery summary leaves genuine uncertainty about this specific question. If it already answers it clearly, call submit_dealbreaker_answer directly.
+
+When ready, call submit_dealbreaker_answer."""
+
+REPORT_RESEARCH_PROMPT = """Research {name} for a detailed evaluation report.
+
+Already known: {discovery_context}
+
+You have up to 3 web searches. Focus on what the summary above doesn't cover:
+- Exact headcount or size signals
+- Technical depth: what's novel about their approach, specific engineering problems
+- Defensibility, competition, market timing
+- Total funding raised
+- Recent momentum (last 12 months): contracts, product news, hires
+
+Be specific. Cite sources where possible."""
+
+
+_usage = {"input_tokens": 0, "output_tokens": 0}
+
+def _reset_usage():
+    _usage["input_tokens"] = 0
+    _usage["output_tokens"] = 0
+
+def _current_cost() -> float:
+    i, o = _usage["input_tokens"], _usage["output_tokens"]
+    return i / 1_000_000 * 3.00 + o / 1_000_000 * 15.00
+
+def _format_cost():
+    i, o = _usage["input_tokens"], _usage["output_tokens"]
+    return f"  Cost: ~${_current_cost():.4f}  ({i:,} in / {o:,} out tokens)"
+
 
 def call_with_retry(fn, retries=4, delay=10):
     """Retry an API call with exponential backoff on overload errors."""
     for attempt in range(retries):
         try:
-            return fn()
+            result = fn()
+            if hasattr(result, 'usage'):
+                _usage["input_tokens"] += getattr(result.usage, 'input_tokens', 0)
+                _usage["output_tokens"] += getattr(result.usage, 'output_tokens', 0)
+            return result
         except APIStatusError as e:
             if e.status_code != 529:
                 raise
@@ -60,9 +134,43 @@ def call_with_retry(fn, retries=4, delay=10):
             time.sleep(wait)
 
 
+def _agentic_search_loop(messages, tools, max_tokens, model="claude-sonnet-4-6"):
+    """Run the agentic web search loop, accumulating text output. Returns (accumulated_text, final_response)."""
+    accumulated = []
+    response = None
+    while True:
+        response = call_with_retry(lambda: client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=messages,
+            tools=tools,
+        ))
+        last_search_idx = max(
+            (i for i, b in enumerate(response.content)
+             if getattr(b, 'type', '') in ('web_search_tool_result', 'server_tool_use')),
+            default=-1
+        )
+        if last_search_idx >= 0:
+            post = [b.text for b in response.content[last_search_idx + 1:]
+                    if hasattr(b, 'text') and b.text and b.text.strip()]
+            accumulated.extend(post)
+        else:
+            cont = [b.text for b in response.content
+                    if hasattr(b, 'text') and b.text and b.text.strip()]
+            accumulated.extend(cont)
+
+        if response.stop_reason in ("pause_turn", "max_tokens"):
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
+            continue
+        break
+
+    return "\n".join(accumulated), response
+
+
 def extract_companies(newsletter_text: str) -> list:
     response = call_with_retry(lambda: client.messages.create(
-        model="claude-opus-4-6",
+        model="claude-sonnet-4-6",
         max_tokens=4096,
         messages=[
             {"role": "user", "content": EXTRACTION_PROMPT + "\n\nNewsletter:\n" + newsletter_text}
@@ -100,139 +208,104 @@ def extract_companies(newsletter_text: str) -> list:
     return response.content[0].input.get("startups", [])
 
 
-def research_company(name: str, description_hint: str = "") -> str:
-    prompt = (
-        f"Research {name}."
-        + (f" Additional context: {description_hint}\n\n" if description_hint else "\n\n")
-        + "If the company name is ambiguous, search with additional context to find the right one "
-        "(looking for a hardware or deep-tech startup).\n\n"
-        "Find and return:\n"
-        "- What they specifically build and how it works\n"
-        "- Founding year and founders\n"
-        "- Funding rounds (amount, stage, investors) — check Crunchbase, TechCrunch, press releases\n"
-        "- Estimated headcount or hiring activity (LinkedIn, job postings)\n"
-        "- Customer wins, contracts, or partnerships (especially government contracts which are often public)\n"
-        "- Recent news or press coverage (frequency and recency signals momentum)\n"
-        "- Any notable milestones (product launches, pilots, deployments)\n\n"
-        "If you can't find hard metrics, report what you do find and note the gap. "
-        "Be specific and factual. Avoid generic statements about the market."
+def discover_company(name: str, description_hint: str = "") -> str:
+    context_hint = f" Context: {description_hint}" if description_hint else ""
+    prompt = DISCOVERY_PROMPT.format(name=name, context_hint=context_hint)
+    messages = [{"role": "user", "content": prompt}]
+    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}]
+    try:
+        result, _ = _agentic_search_loop(messages, tools, max_tokens=1024)
+        print(f"  Discovery complete: {len(result)} chars")
+        return result
+    except Exception as e:
+        print(f"  Discovery failed ({type(e).__name__}): {e}")
+        return ""
+
+
+def evaluate_dealbreaker(name: str, discovery_context: str, dealbreaker_key: str) -> dict:
+    spec = DEALBREAKER_SPECS[dealbreaker_key]
+    prompt = DEALBREAKER_EVAL_PROMPT.format(
+        name=name,
+        discovery_context=discovery_context or "No discovery data available.",
+        question=spec["question"],
+        search_guidance=spec["search_guidance"],
     )
     messages = [{"role": "user", "content": prompt}]
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+    tools = [
+        {"type": "web_search_20250305", "name": "web_search", "max_uses": 2},
+        {
+            "name": "submit_dealbreaker_answer",
+            "description": "Submit your structured answer for this dealbreaker.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
+                    "reason": {"type": "string", "description": "1-2 sentences citing specific facts."}
+                },
+                "required": ["answer", "reason"]
+            }
+        }
+    ]
     try:
-        accumulated = []
         while True:
             response = call_with_retry(lambda: client.messages.create(
-                model="claude-opus-4-6",
-                max_tokens=4096,
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
                 messages=messages,
                 tools=tools,
             ))
-            block_summary = [(getattr(b, 'type', type(b).__name__), len(getattr(b, 'text', '') or '')) for b in response.content]
-            print(f"  Research response: stop_reason={response.stop_reason}, blocks={block_summary}")
-
-            last_search_idx = max(
-                (i for i, b in enumerate(response.content)
-                 if getattr(b, 'type', '') in ('web_search_tool_result', 'server_tool_use')),
-                default=-1
-            )
-            if last_search_idx >= 0:
-                # First response: take all text after the last search block (skips preamble)
-                post = [b.text for b in response.content[last_search_idx + 1:]
-                        if hasattr(b, 'text') and b.text and b.text.strip()]
-                accumulated.extend(post)
-            else:
-                # Continuation response: take all text
-                cont = [b.text for b in response.content
-                        if hasattr(b, 'text') and b.text and b.text.strip()]
-                accumulated.extend(cont)
+            if response.stop_reason == "tool_use":
+                for block in response.content:
+                    if getattr(block, 'type', '') == 'tool_use' and block.name == "submit_dealbreaker_answer":
+                        return block.input
 
             if response.stop_reason in ("pause_turn", "max_tokens"):
                 messages.append({"role": "assistant", "content": response.content})
                 messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
                 continue
+
+            # end_turn without structured answer
             break
 
-        result = "\n".join(accumulated)
-        print(f"  Research complete: {len(result)} chars across {len(accumulated)} text blocks")
+        return {"answer": "unknown", "reason": "Model did not submit a structured answer."}
+    except Exception as e:
+        print(f"  Dealbreaker {dealbreaker_key} failed ({type(e).__name__}): {e}")
+        return {"answer": "unknown", "reason": f"Evaluation error: {e}"}
+
+
+def check_dealbreakers_sequential(name: str, description: str, discovery_context: str) -> tuple[bool, dict]:
+    results = {}
+    for key in DEALBREAKER_ORDER:
+        print(f"  [{name}] Evaluating {key}...")
+        result = evaluate_dealbreaker(name, discovery_context, key)
+        results[key] = result
+        if result["answer"] == "no":
+            print(f"  [{name}] Failed {key}: {result['reason']}. Aborting.")
+            for remaining in DEALBREAKER_ORDER:
+                if remaining not in results:
+                    results[remaining] = {"answer": "unknown", "reason": "Not evaluated (earlier dealbreaker failed)."}
+            return False, results
+    passed = all(v["answer"] != "no" for v in results.values())
+    return passed, results
+
+
+def research_for_report(name: str, discovery_context: str) -> str:
+    prompt = REPORT_RESEARCH_PROMPT.format(name=name, discovery_context=discovery_context or "No discovery data available.")
+    messages = [{"role": "user", "content": prompt}]
+    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
+    try:
+        result, _ = _agentic_search_loop(messages, tools, max_tokens=2048)
+        print(f"  Report research complete: {len(result)} chars")
         return result
     except Exception as e:
-        print(f"  Research failed ({type(e).__name__}): {e}")
+        print(f"  Report research failed ({type(e).__name__}): {e}")
         return ""
-
-
-def check_dealbreakers(name: str, description: str, research_context: str = "") -> tuple[bool, dict]:
-    prompt = DEALBREAKER_PROMPT.format(name=name, description=description, research_context=research_context or "No research available.")
-    response = call_with_retry(lambda: client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-        tools=[{
-            "name": "save_dealbreaker_results",
-            "description": "Save the dealbreaker evaluation results",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "developing_hardware": {
-                        "type": "object",
-                        "description": "Is the company developing hardware (physical products, sensors, devices, robotics, etc.)? Chip design / fabless semiconductor companies do NOT qualify — this role requires hands-on embedded/firmware work, not RTL or silicon design.",
-                        "properties": {
-                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
-                            "reason": {"type": "string"}
-                        },
-                        "required": ["answer", "reason"]
-                    },
-                    "is_startup": {
-                        "type": "object",
-                        "description": "Is this a startup (not a large established company)?",
-                        "properties": {
-                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
-                            "reason": {"type": "string"}
-                        },
-                        "required": ["answer", "reason"]
-                    },
-                    "solves_real_problem": {
-                        "type": "object",
-                        "description": "Does the company solve a real, significant pain point?",
-                        "properties": {
-                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
-                            "reason": {"type": "string"}
-                        },
-                        "required": ["answer", "reason"]
-                    },
-                    "growing_quickly": {
-                        "type": "object",
-                        "description": "Is the company showing signs of growth? Look for: recent funding rounds, headcount increases, new contracts or customers, product launches, press coverage. Answer 'unknown' if research doesn't surface clear signals either way.",
-                        "properties": {
-                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
-                            "reason": {"type": "string"}
-                        },
-                        "required": ["answer", "reason"]
-                    },
-                    "billion_dollar_potential": {
-                        "type": "object",
-                        "description": "Does this company have the potential to be a billion-dollar company?",
-                        "properties": {
-                            "answer": {"type": "string", "enum": ["yes", "no", "unknown"]},
-                            "reason": {"type": "string"}
-                        },
-                        "required": ["answer", "reason"]
-                    }
-                },
-                "required": ["developing_hardware", "is_startup", "solves_real_problem", "growing_quickly", "billion_dollar_potential"]
-            }
-        }],
-        tool_choice={"type": "tool", "name": "save_dealbreaker_results"}
-    ))
-    result = response.content[0].input
-    passed = all(v["answer"] != "no" for v in result.values())
-    return passed, result
 
 
 def generate_report(name: str, description: str, dealbreaker_results: dict, research_context: str = "") -> dict:
     prompt = REPORT_PROMPT.format(name=name, description=description, research_context=research_context or "No research available.")
     response = call_with_retry(lambda: client.messages.create(
-        model="claude-opus-4-6",
+        model="claude-sonnet-4-6",
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
         tools=[{
@@ -340,6 +413,15 @@ def generate_report(name: str, description: str, dealbreaker_results: dict, rese
     return report
 
 
+# Backward-compatible wrappers for scout_bot.py and rerun.py
+def research_company(name: str, description_hint: str = "") -> str:
+    return discover_company(name, description_hint)
+
+
+def check_dealbreakers(name: str, description: str, research_context: str = "") -> tuple[bool, dict]:
+    return check_dealbreakers_sequential(name, description, research_context)
+
+
 def process_newsletter(text: str, source: str = "manual"):
     init_db()
     print(f"\nExtracting companies from newsletter...")
@@ -355,22 +437,25 @@ def process_newsletter(text: str, source: str = "manual"):
                 print(f"  [{name}] Already in database, skipping.")
                 continue
 
-            print(f"  [{name}] Researching...")
-            research_context = research_company(name, description)
-            if not research_context:
-                print(f"  [{name}] Warning: research returned nothing, evaluating without web data.")
+            print(f"  [{name}] Discovering...")
+            discovery_context = discover_company(name, description)
+            if not discovery_context:
+                print(f"  [{name}] Warning: discovery returned nothing, evaluating without web data.")
 
             print(f"  [{name}] Checking dealbreakers...")
-            passed, dealbreaker_results = check_dealbreakers(name, description, research_context)
+            passed, dealbreaker_results = check_dealbreakers_sequential(name, description, discovery_context)
 
             if not passed:
-                failed = [k for k, v in dealbreaker_results.items() if not v["answer"]]
+                failed = [k for k, v in dealbreaker_results.items() if v["answer"] == "no"]
                 print(f"  [{name}] Failed dealbreakers: {failed}. Skipping.")
                 save_company(name, source, passed=False)
                 continue
 
-            print(f"  [{name}] Passed! Generating report...")
-            report = generate_report(name, description, dealbreaker_results, research_context)
+            print(f"  [{name}] Passed! Researching for report...")
+            report_context = research_for_report(name, discovery_context)
+
+            print(f"  [{name}] Generating report...")
+            report = generate_report(name, description, dealbreaker_results, report_context)
             report["_description"] = description
             save_company(name, source, passed=True, report=json.dumps(report))
             print(f"  [{name}] Done.")
@@ -381,29 +466,34 @@ def process_newsletter(text: str, source: str = "manual"):
 
 def evaluate_company(name: str):
     """Evaluate a single company by name. Prints research, dealbreakers, and report."""
+    _reset_usage()
     init_db()
-    print(f"\n=== Researching {name} ===")
-    research_context = research_company(name)
-    if research_context:
-        print(f"\n--- Research Brief ({len(research_context)} chars) ---")
-        print(research_context)
+    print(f"\n=== Discovering {name} ===")
+    discovery_context = discover_company(name)
+    if discovery_context:
+        print(f"\n--- Discovery Brief ({len(discovery_context)} chars) ---")
+        print(discovery_context)
     else:
-        print("WARNING: Research returned nothing.")
+        print("WARNING: Discovery returned nothing.")
 
-    description = research_context.split("\n\n")[0].strip() if research_context else name
+    description = discovery_context.split("\n\n")[0].strip() if discovery_context else name
 
     print(f"\n=== Dealbreakers ===")
-    passed, dealbreaker_results = check_dealbreakers(name, description, research_context)
+    passed, dealbreaker_results = check_dealbreakers_sequential(name, description, discovery_context)
     for key, value in dealbreaker_results.items():
         icon = "✅" if value["answer"] == "yes" else ("⚠️ " if value["answer"] == "unknown" else "❌")
         print(f"{icon} {key}: {value['reason']}")
 
     if not passed:
         print(f"\nDid not pass dealbreakers.")
+        print(_format_cost())
         return
 
+    print(f"\n=== Researching for report ===")
+    report_context = research_for_report(name, discovery_context)
+
     print(f"\n=== Report ===")
-    report = generate_report(name, description, dealbreaker_results, research_context)
+    report = generate_report(name, description, dealbreaker_results, report_context)
     location = report.get("location", {}).get("answer", "Unknown")
     mission = report.get("mission", {}).get("answer", "")
     print(f"Location: {location}")
@@ -415,6 +505,8 @@ def evaluate_company(name: str):
         assessment = value.get("assessment", "").upper()
         print(f"\n[{assessment}] {key.replace('_', ' ').title()}")
         print(value["answer"])
+
+    print(f"\n{_format_cost()}")
 
 
 if __name__ == "__main__":
