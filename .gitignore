@@ -4,6 +4,8 @@ credentials.json
 logs/
 token.pickle
 calendar_token.pickle
+calendar_gmail_token.pickle
+outlook_token.pickle
 __pycache__/
 evaluate.py
 .DS_Store

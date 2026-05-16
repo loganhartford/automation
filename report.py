@@ -1,7 +1,12 @@
 import json
+import os
 from datetime import datetime
-from db import get_unreported_companies, mark_as_reported
+from html import escape
+from dotenv import load_dotenv
+from db import get_unreported_companies, mark_as_reported, get_source_stats
 from gmail import send_report
+
+load_dotenv()
 
 DEALBREAKER_LABELS = {
     "developing_hardware": "Developing Hardware?",
@@ -41,24 +46,35 @@ _STYLES = """
         .report-label { font-weight: bold; margin-bottom: 4px; }
         .report-answer { margin: 0; color: #333; }
         .assessment { font-size: 12px; font-weight: bold; color: #666; margin-left: 6px; }
+        .action-link { display: inline-block; margin-top: 16px; font-weight: bold; color: #1a73e8; text-decoration: none; }
         hr { border: none; border-top: 1px solid #eee; margin: 40px 0; }
     </style>
 """
 
 
-def _render_company_html(name, first_seen, source, report_json):
+def _full_report_link(company_id):
+    bot_username = os.getenv("TELEGRAM_SCOUT_BOT_USERNAME")
+    if not bot_username:
+        return None
+    bot_username = bot_username.lstrip("@")
+    return f"https://t.me/{bot_username}?start=full_{company_id}"
+
+
+def _render_company_html(company_id, name, first_seen, source, report_json, cost=None):
     report = json.loads(report_json)
     description = report.pop("_description", None)
+    report.pop("_discovery_context", None)
     dealbreakers = report.pop("dealbreakers", None)
     location = report.pop("location", {}).get("answer", "Unknown")
     mission = report.pop("mission", {}).get("answer", None)
 
-    html = f"<h2>{name}</h2>"
-    html += f'<p class="meta">First seen: {first_seen[:10]} | Source: {source} | {location}</p>'
+    cost_str = f" | Cost: ${cost:.4f}" if cost is not None else ""
+    html = f"<h2>{escape(name)}</h2>"
+    html += f'<p class="meta">First seen: {escape(first_seen[:10])} | Source: {escape(source)} | {escape(location)}{escape(cost_str)}</p>'
     if description:
-        html += f'<p class="description">{description}</p>'
+        html += f'<p class="description">{escape(description)}</p>'
     if mission:
-        html += f'<p class="mission">{mission}</p>'
+        html += f'<p class="mission">{escape(mission)}</p>'
 
     if dealbreakers:
         html += "<h3>Dealbreaker Check</h3>"
@@ -67,9 +83,9 @@ def _render_company_html(name, first_seen, source, report_json):
             raw = value.get("answer")
             answer = "Yes" if raw == "yes" else ("⚠️ Unknown" if raw == "unknown" else "No")
             reason = value.get("reason", "")
-            html += f'<div class="dealbreaker-item"><strong>{label}</strong> {answer} — {reason}</div>'
+            html += f'<div class="dealbreaker-item"><strong>{escape(label)}</strong> {answer} — {escape(reason)}</div>'
 
-    html += "<h3>Analysis</h3>"
+    report_items = []
     for key, value in report.items():
         if not isinstance(value, dict):
             continue
@@ -77,12 +93,25 @@ def _render_company_html(name, first_seen, source, report_json):
         assessment = value.get("assessment", "").lower()
         assessment_label = ASSESSMENT_LABEL.get(assessment, "")
         answer = value.get("answer", "")
-        html += f"""
+        report_items.append(f"""
         <div class="report-item">
-            <div class="report-label">{label} <span class="assessment">{assessment_label}</span></div>
-            <p class="report-answer">{answer}</p>
+            <div class="report-label">{escape(label)} <span class="assessment">{escape(assessment_label)}</span></div>
+            <p class="report-answer">{escape(answer)}</p>
         </div>
-        """
+        """)
+
+    if report_items:
+        html += "<h3>Analysis</h3>"
+        html += "".join(report_items)
+    else:
+        link = _full_report_link(company_id)
+        if link:
+            html += (
+                f'<p><a class="action-link" href="{escape(link)}">Generate full report in Telegram</a>'
+                f'<br><span class="meta">If Telegram only opens the chat, send <code>/full {company_id}</code>.</span></p>'
+            )
+        else:
+            html += '<p class="meta">Set TELEGRAM_SCOUT_BOT_USERNAME to enable full-report links.</p>'
 
     return html
 
@@ -108,10 +137,44 @@ def generate_weekly_report():
     """
 
     names_to_mark = []
-    for name, first_seen, source, report_json in companies:
-        html += _render_company_html(name, first_seen, source, report_json)
+    costs = []
+    for company_id, name, first_seen, source, report_json, cost in companies:
+        html += _render_company_html(company_id, name, first_seen, source, report_json, cost)
         html += "<hr>"
         names_to_mark.append(name)
+        if cost is not None:
+            costs.append(cost)
+
+    # Cost summary
+    if costs:
+        total_cost = sum(costs)
+        html += f'<h2>Report Cost</h2>'
+        html += f'<p class="meta">Total: ${total_cost:.4f} across {len(costs)} evaluated {"company" if len(costs) == 1 else "companies"}</p>'
+        html += "<hr>"
+
+    # All-time source stats
+    source_stats = get_source_stats()
+    if source_stats:
+        html += "<h2>Newsletter Source Stats (All Time)</h2>"
+        html += """<table style="border-collapse:collapse;font-size:14px;width:100%">
+        <thead><tr>
+            <th style="text-align:left;padding:6px 12px;border-bottom:2px solid #eee">Source</th>
+            <th style="text-align:right;padding:6px 12px;border-bottom:2px solid #eee">Passed</th>
+            <th style="text-align:right;padding:6px 12px;border-bottom:2px solid #eee">Failed</th>
+            <th style="text-align:right;padding:6px 12px;border-bottom:2px solid #eee">Total</th>
+            <th style="text-align:right;padding:6px 12px;border-bottom:2px solid #eee">Pass %</th>
+        </tr></thead><tbody>"""
+        for src, passed, failed in source_stats:
+            total = passed + failed
+            pct = f"{passed / total * 100:.0f}%" if total else "—"
+            html += f"""<tr>
+            <td style="padding:5px 12px;border-bottom:1px solid #f0f0f0">{escape(src or "unknown")}</td>
+            <td style="text-align:right;padding:5px 12px;border-bottom:1px solid #f0f0f0">{passed}</td>
+            <td style="text-align:right;padding:5px 12px;border-bottom:1px solid #f0f0f0">{failed}</td>
+            <td style="text-align:right;padding:5px 12px;border-bottom:1px solid #f0f0f0">{total}</td>
+            <td style="text-align:right;padding:5px 12px;border-bottom:1px solid #f0f0f0">{pct}</td>
+            </tr>"""
+        html += "</tbody></table>"
 
     html += "</body></html>"
 
@@ -132,7 +195,7 @@ def generate_weekly_report():
 
 def send_single_company_report(name, first_seen, source, report_json):
     date_str = datetime.now().strftime('%B %d, %Y')
-    company_html = _render_company_html(name, first_seen, source, report_json)
+    company_html = _render_company_html(None, name, first_seen, source, report_json)
 
     html = f"""
     <html>

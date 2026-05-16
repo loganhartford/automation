@@ -3,6 +3,7 @@ import base64
 import pickle
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import parseaddr
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -11,6 +12,9 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.pickle"
 SCOUT_EMAIL = "loganhartford.scout@gmail.com"
+
+CALENDAR_TOKEN_FILE = "calendar_gmail_token.pickle"
+CALENDAR_EMAIL = "loganhartford.calendar@gmail.com"
 
 
 def get_service():
@@ -26,6 +30,23 @@ def get_service():
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
         with open(TOKEN_FILE, "wb") as f:
+            pickle.dump(creds, f)
+    return build("gmail", "v1", credentials=creds)
+
+
+def get_calendar_gmail_service():
+    """Authenticate and return a Gmail service object for the calendar account."""
+    creds = None
+    if os.path.exists(CALENDAR_TOKEN_FILE):
+        with open(CALENDAR_TOKEN_FILE, "rb") as f:
+            creds = pickle.load(f)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(CALENDAR_TOKEN_FILE, "wb") as f:
             pickle.dump(creds, f)
     return build("gmail", "v1", credentials=creds)
 
@@ -47,6 +68,7 @@ def get_unread_emails():
 
         headers = {h["name"]: h["value"] for h in full["payload"]["headers"]}
         subject = headers.get("Subject", "No Subject")
+        _, sender_email = parseaddr(headers.get("From", ""))
 
         # Extract body
         body = ""
@@ -62,7 +84,7 @@ def get_unread_emails():
                 payload["body"]["data"]
             ).decode("utf-8", errors="ignore")
 
-        emails.append((subject, body, msg["id"]))
+        emails.append((subject, sender_email, body, msg["id"]))
 
     return emails
 
@@ -82,6 +104,17 @@ def send_email(to_address: str, subject: str, body: str):
     message = MIMEText(body, "plain")
     message["Subject"] = subject
     message["From"] = SCOUT_EMAIL
+    message["To"] = to_address
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+
+
+def send_calendar_email(to_address: str, subject: str, body: str):
+    """Send a plain-text email from the calendar account."""
+    service = get_calendar_gmail_service()
+    message = MIMEText(body, "plain")
+    message["Subject"] = subject
+    message["From"] = CALENDAR_EMAIL
     message["To"] = to_address
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     service.users().messages().send(userId="me", body={"raw": raw}).execute()

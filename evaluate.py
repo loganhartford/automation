@@ -3,7 +3,7 @@ import time
 import anthropic
 from anthropic import APIStatusError
 from dotenv import load_dotenv
-from db import init_db, already_seen, save_company
+from db import init_db, already_seen, save_company, get_company_by_id, update_company_report
 import json
 
 load_dotenv()
@@ -95,7 +95,10 @@ DEALBREAKER_MODELS = {
 DEALBREAKER_EVAL_PROMPT = """You are evaluating a startup for a senior embedded/firmware engineer considering companies to join.
 
 Company: {name}
+Newsletter description: {description}
 Discovery summary: {discovery_context}
+
+The newsletter description is how the company was characterized in a tech/startup newsletter — useful framing, but may be promotional. Prioritize the discovery summary and any web search results for factual assessments; use the newsletter description as supporting context.
 
 Your task: answer one specific question about this company.
 
@@ -119,6 +122,24 @@ You have up to 3 web searches. Focus on what the summary above doesn't cover:
 - Recent momentum (last 12 months): contracts, product news, hires
 
 Be specific. Cite sources where possible."""
+
+FULL_REPORT_REQUIRED_FIELDS = {
+    "location",
+    "mission",
+    "company_size",
+    "monopoly_potential",
+    "novelty",
+    "breakthrough_vs_incremental",
+    "timing",
+    "unique_opportunity",
+    "learning_opportunities",
+    "transferable_skills",
+}
+
+
+class CreditExhaustedError(Exception):
+    """Raised when the API returns a billing/credit error (non-retryable)."""
+    pass
 
 
 _usage = {"input_tokens": 0, "output_tokens": 0}
@@ -146,6 +167,8 @@ def call_with_retry(fn, retries=4, delay=10):
                 _usage["output_tokens"] += getattr(result.usage, 'output_tokens', 0)
             return result
         except APIStatusError as e:
+            if e.status_code == 402:
+                raise CreditExhaustedError(f"API credit exhausted (HTTP 402): {e.message}") from e
             if e.status_code != 529:
                 raise
             if attempt == retries - 1:
@@ -271,10 +294,11 @@ def prefilter_hardware(name: str, description: str) -> str:
         return "unknown"
 
 
-def evaluate_dealbreaker(name: str, discovery_context: str, dealbreaker_key: str) -> dict:
+def evaluate_dealbreaker(name: str, description: str, discovery_context: str, dealbreaker_key: str) -> dict:
     spec = DEALBREAKER_SPECS[dealbreaker_key]
     prompt = DEALBREAKER_EVAL_PROMPT.format(
         name=name,
+        description=description or "No newsletter description available.",
         discovery_context=discovery_context or "No discovery data available.",
         question=spec["question"],
         search_guidance=spec["search_guidance"],
@@ -336,7 +360,7 @@ def check_dealbreakers_sequential(name: str, description: str, discovery_context
 
     for key in DEALBREAKER_ORDER:
         print(f"  [{name}] Evaluating {key}...")
-        result = evaluate_dealbreaker(name, discovery_context, key)
+        result = evaluate_dealbreaker(name, description, discovery_context, key)
         results[key] = result
         fail = result["answer"] == "no" or (key in ("developing_hardware", "is_startup") and result["answer"] == "unknown")
         if fail:
@@ -476,6 +500,66 @@ def generate_report(name: str, description: str, dealbreaker_results: dict, rese
     return report
 
 
+def has_full_report(report: dict) -> bool:
+    return FULL_REPORT_REQUIRED_FIELDS.issubset(report.keys())
+
+
+def generate_full_report_for_company_id(company_id: int) -> tuple[dict, bool]:
+    """Generate or reuse a full report for a saved company.
+
+    Returns (result, generated), where result contains the company row fields and
+    report_json. Raises ValueError for user-facing validation failures.
+    """
+    init_db()
+    row = get_company_by_id(company_id)
+    if not row:
+        raise ValueError(f"No company found with id {company_id}.")
+
+    _, name, first_seen, source, passed_dealbreakers, report_json, _ = row
+    if not passed_dealbreakers:
+        raise ValueError(f"{name} did not pass dealbreakers.")
+    if not report_json:
+        raise ValueError(f"{name} has no dealbreaker report saved.")
+
+    report = json.loads(report_json)
+    if has_full_report(report):
+        return {
+            "id": company_id,
+            "name": name,
+            "first_seen": first_seen,
+            "source": source,
+            "report_json": report_json,
+        }, False
+
+    description = report.get("_description") or name
+    discovery_context = report.get("_discovery_context") or ""
+    dealbreaker_results = report.get("dealbreakers")
+    if not dealbreaker_results:
+        raise ValueError(f"{name} has no dealbreaker results saved.")
+
+    if not discovery_context:
+        print(f"  [{name}] Missing discovery context, discovering before report...")
+        discovery_context = discover_company(name, description)
+        report["_discovery_context"] = discovery_context
+
+    print(f"  [{name}] Researching for full report...")
+    report_context = research_for_report(name, discovery_context)
+
+    print(f"  [{name}] Generating full report...")
+    full_report = generate_report(name, description, dealbreaker_results, report_context)
+    full_report["_description"] = description
+    full_report["_discovery_context"] = discovery_context
+    update_company_report(company_id, json.dumps(full_report))
+
+    return {
+        "id": company_id,
+        "name": name,
+        "first_seen": first_seen,
+        "source": source,
+        "report_json": json.dumps(full_report),
+    }, True
+
+
 # Backward-compatible wrappers for scout_bot.py and rerun.py
 def research_company(name: str, description_hint: str = "") -> str:
     return discover_company(name, description_hint)
@@ -500,6 +584,7 @@ def process_newsletter(text: str, source: str = "manual"):
                 print(f"  [{name}] Already in database, skipping.")
                 continue
 
+            _reset_usage()
             print(f"  [{name}] Discovering...")
             discovery_context = discover_company(name, description)
             if not discovery_context:
@@ -511,17 +596,16 @@ def process_newsletter(text: str, source: str = "manual"):
             if not passed:
                 failed = [k for k, v in dealbreaker_results.items() if v["answer"] == "no"]
                 print(f"  [{name}] Failed dealbreakers: {failed}. Skipping.")
-                save_company(name, source, passed=False)
+                save_company(name, source, passed=False, cost=_current_cost())
                 continue
 
-            print(f"  [{name}] Passed! Researching for report...")
-            report_context = research_for_report(name, discovery_context)
-
-            print(f"  [{name}] Generating report...")
-            report = generate_report(name, description, dealbreaker_results, report_context)
-            report["_description"] = description
-            save_company(name, source, passed=True, report=json.dumps(report))
-            print(f"  [{name}] Done.")
+            report = {
+                "_description": description,
+                "_discovery_context": discovery_context,
+                "dealbreakers": dealbreaker_results,
+            }
+            save_company(name, source, passed=True, report=json.dumps(report), cost=_current_cost())
+            print(f"  [{name}] Passed dealbreakers. Saved for weekly report.")
         except Exception as e:
             print(f"  [{company.get('name', 'unknown')}] ERROR: {e}")
             continue

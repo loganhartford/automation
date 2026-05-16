@@ -12,13 +12,13 @@ def ingest():
         print("No new emails.")
         return
 
-    for subject, body, message_id in emails:
+    for subject, sender_email, body, message_id in emails:
         if not body.strip():
             print(f"  Skipping {subject} — empty body.")
             mark_as_read(service, message_id)
             continue
-        print(f"Processing: {subject}")
-        process_newsletter(body, source=subject)
+        print(f"Processing: {subject} (from {sender_email})")
+        process_newsletter(body, source=sender_email)
         mark_as_read(service, message_id)
         print(f"Done: {subject}")
 

@@ -1,11 +1,13 @@
 import os
+import time
 import datetime
+import logging
 import pytz
 import anthropic
 import requests
 from dotenv import load_dotenv
 from calendar_api import get_upcoming_bookings, reschedule_booking, cancel_booking
-from gmail import send_email
+from gmail import send_calendar_email
 
 load_dotenv()
 
@@ -14,7 +16,7 @@ MAX_HISTORY = 20
 
 _conversation_history = {}
 
-SYSTEM_PROMPT = """You are Logan's scheduling assistant. You manage meeting bookings made via his scheduling page (meet.lhartford.com).
+SYSTEM_PROMPT = """You are Logan's scheduling assistant. You manage Logan's calendar bookings.
 
 You can list upcoming bookings, reschedule them, cancel them, or send a custom email to a participant. When a request is ambiguous (e.g. multiple bookings or unclear time), ask a clarifying question before acting. Keep replies brief. You are communicating via Telegram, so use plain text only — no markdown formatting.
 
@@ -100,7 +102,7 @@ def _execute_tool(name, tool_input):
         return "Booking cancelled. Attendee notified via Google Calendar."
 
     if name == "email_participant":
-        send_email(tool_input["to_email"], tool_input["subject"], tool_input["body"])
+        send_calendar_email(tool_input["to_email"], tool_input["subject"], tool_input["body"])
         return f"Email sent to {tool_input['to_email']}."
 
     return f"Unknown tool: {name}"
@@ -176,3 +178,69 @@ def send_telegram_message(chat_id, text):
         )
     except Exception:
         pass
+
+
+logging.basicConfig(
+    filename=os.path.join(os.path.dirname(__file__), "logs", "schedule.log"),
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
+
+def _deregister_webhook():
+    token = os.getenv("TELEGRAM_SCHEDULER_BOT_TOKEN", "")
+    if not token:
+        return
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{token}/deleteWebhook", timeout=10)
+        logging.info("deleteWebhook: %s", r.json())
+    except Exception as e:
+        logging.warning("deleteWebhook failed: %s", e)
+
+
+def run():
+    token = os.getenv("TELEGRAM_SCHEDULER_BOT_TOKEN", "")
+    if not token:
+        logging.error("TELEGRAM_SCHEDULER_BOT_TOKEN not set, exiting.")
+        return
+
+    _deregister_webhook()
+    logging.info("Scheduler bot starting long-polling loop.")
+
+    offset = None
+    while True:
+        try:
+            params = {"timeout": 30, "allowed_updates": ["message"]}
+            if offset is not None:
+                params["offset"] = offset
+            r = requests.get(
+                f"https://api.telegram.org/bot{token}/getUpdates",
+                params=params,
+                timeout=40,
+            )
+            data = r.json()
+            if not data.get("ok"):
+                logging.warning("getUpdates not ok: %s", data)
+                time.sleep(5)
+                continue
+            for update in data.get("result", []):
+                offset = update["update_id"] + 1
+                message = update.get("message", {})
+                chat_id = message.get("chat", {}).get("id")
+                text = message.get("text", "").strip()
+                if chat_id and text:
+                    try:
+                        reply = handle_message(chat_id, text)
+                        if reply:
+                            send_telegram_message(chat_id, reply)
+                    except Exception as e:
+                        logging.error("Error handling message from %s: %s", chat_id, e)
+        except requests.exceptions.ReadTimeout:
+            continue
+        except Exception as e:
+            logging.error("Polling error: %s", e)
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    run()

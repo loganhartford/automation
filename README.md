@@ -14,9 +14,9 @@ Automated pipeline that monitors forwarded newsletters, evaluates mentioned star
 
 1. You forward newsletters to `loganhartford.scout@gmail.com`
 2. `ingest.py` runs hourly via systemd timer, reads unread emails, and runs each through the evaluation pipeline
-3. Companies are checked against dealbreakers, then if they pass, a full report is generated
+3. Companies are checked against dealbreakers, then if they pass, a lightweight dealbreaker report is saved
 4. Results are stored in `scout.db` (SQLite) with deduplication — the same company is never evaluated twice
-5. `report.py` runs daily at 7am, emails a report of all new companies since the last report
+5. `report.py` runs daily at 7am, emails a report of all new companies since the last report, with Telegram links to generate full reports on demand
 
 ---
 
@@ -65,6 +65,7 @@ Create a `.env` file:
 ANTHROPIC_API_KEY=
 TELEGRAM_SCOUT_BOT_TOKEN=
 TELEGRAM_SCOUT_CHAT_ID=
+TELEGRAM_SCOUT_BOT_USERNAME=
 TELEGRAM_SCHEDULER_BOT_TOKEN=
 TELEGRAM_SCHEDULER_CHAT_ID=
 WEBHOOK_SECRET=
@@ -130,6 +131,70 @@ All prompts and evaluation logic live in `evaluate.py`:
 - **`REPORT_PROMPT`** and the `generate_report` tool schema — the 6 analysis questions
 
 To add or change a dealbreaker or report field, update both the prompt description and the corresponding entry in the tool `input_schema`. Then update `DEALBREAKER_LABELS` or `REPORT_LABELS` in `report.py` so it renders with a clean label.
+
+---
+
+## Adding a New Gmail Account
+
+Each Gmail account used by the automation needs its own OAuth token file and a corresponding service function in `gmail.py`. The pattern is always the same:
+
+### 1. Create the Gmail account
+
+Create the account at accounts.google.com.
+
+### 2. Add it as a test user in Google Cloud
+
+Go to console.cloud.google.com → `startup-scout` project → **APIs & Services → OAuth consent screen → Test users** → add the new address.
+
+> Skip this if the app is ever published (not in testing mode).
+
+### 3. Add constants and a service function to `gmail.py`
+
+```python
+MY_NEW_TOKEN_FILE = "my_new_token.pickle"
+MY_NEW_EMAIL = "loganhartford.new@gmail.com"
+
+def get_my_new_service():
+    creds = None
+    if os.path.exists(MY_NEW_TOKEN_FILE):
+        with open(MY_NEW_TOKEN_FILE, "rb") as f:
+            creds = pickle.load(f)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(MY_NEW_TOKEN_FILE, "wb") as f:
+            pickle.dump(creds, f)
+    return build("gmail", "v1", credentials=creds)
+```
+
+### 4. Generate the token (requires browser)
+
+```bash
+source venv/bin/activate
+python3 -c "from gmail import get_my_new_service; get_my_new_service()"
+```
+
+When the browser opens, sign in as the new Gmail account. The token file is written automatically.
+
+### 5. Verify
+
+```python
+svc = get_my_new_service()
+profile = svc.users().getProfile(userId="me").execute()
+print(profile["emailAddress"])  # should match MY_NEW_EMAIL
+```
+
+### 6. Re-authenticate an expired or wrong-account token
+
+Delete the token file and re-run step 4:
+
+```bash
+rm my_new_token.pickle
+python3 -c "from gmail import get_my_new_service; get_my_new_service()"
+```
 
 ---
 

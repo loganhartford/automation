@@ -63,10 +63,62 @@ async def _reply(update: Update, text: str):
         await update.message.reply_text(text[i:i + 4000], parse_mode="HTML")
 
 
+async def _handle_full_report_request(update: Update, company_id: int):
+    try:
+        from evaluate import generate_full_report_for_company_id
+        from report import send_single_company_report
+
+        await update.message.reply_text("Generating full report...")
+        result, generated = generate_full_report_for_company_id(company_id)
+
+        report = json.loads(result["report_json"])
+        await _reply(update, _format_report(result["name"], report))
+        send_single_company_report(
+            result["name"],
+            result["first_seen"],
+            result["source"],
+            result["report_json"],
+        )
+
+        if generated:
+            await update.message.reply_text("Full report generated and emailed.")
+        else:
+            await update.message.reply_text("Existing full report emailed.")
+    except ValueError as e:
+        await update.message.reply_text(str(e))
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+        raise
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_CHAT_ID:
         return
+    if context.args:
+        payload = context.args[0]
+        if payload.startswith("full_"):
+            try:
+                company_id = int(payload.removeprefix("full_"))
+            except ValueError:
+                await update.message.reply_text("Invalid full-report link.")
+                return
+            await _handle_full_report_request(update, company_id)
+            return
     await update.message.reply_text("Scout bot ready. Send a company name to evaluate it.")
+
+
+async def full(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != ALLOWED_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /full <company_id>")
+        return
+    try:
+        company_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Company id must be a number.")
+        return
+    await _handle_full_report_request(update, company_id)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -77,10 +129,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not name:
         return
 
+    if name.startswith("full_"):
+        try:
+            company_id = int(name.removeprefix("full_"))
+        except ValueError:
+            await update.message.reply_text("Invalid full-report command.")
+            return
+        await _handle_full_report_request(update, company_id)
+        return
+
     await update.message.reply_text("On it...")
 
     try:
-        from evaluate import check_dealbreakers, generate_report, research_company
+        from evaluate import check_dealbreakers, generate_report, research_company, _reset_usage, _current_cost
         from db import init_db, already_seen, save_company
         from report import send_single_company_report
 
@@ -90,6 +151,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _reply(update, f"⚠️ <b>{name}</b> is already in the database.")
             return
 
+        _reset_usage()
         await update.message.reply_text("Researching...")
         research_context = research_company(name)
         if not research_context:
@@ -112,14 +174,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, "\n".join(lines))
 
         if not passed:
-            save_company(name, source="telegram", passed=False)
+            save_company(name, source="telegram", passed=False, cost=_current_cost())
             await update.message.reply_text("❌ Did not pass dealbreakers.")
             return
 
         await update.message.reply_text("✅ Passed! Generating report...")
         report = generate_report(name, description, dealbreaker_results, research_context)
         report["_description"] = description
-        save_company(name, source="telegram", passed=True, report=json.dumps(report))
+        save_company(name, source="telegram", passed=True, report=json.dumps(report), cost=_current_cost())
 
         telegram_report = json.loads(json.dumps(report))
         await _reply(update, _format_report(name, telegram_report))
@@ -136,6 +198,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("full", full))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Scout bot running...")
     app.run_polling()

@@ -112,48 +112,29 @@ The `report` JSON blob stores everything that doesn't have its own column: `_des
 
 ---
 
-## Scheduler (meet.lhartford.com)
+## Scheduler
 
-Self-hosted booking tool. Flask app served via gunicorn on port 5001, exposed publicly via **Cloudflare Tunnel** (no open ports, home IP not exposed). Runs as systemd user service `scout-schedule`.
-
-### Cloudflare Tunnel
-
-Traffic flow: `user → Cloudflare edge → cloudflared tunnel → localhost:5001`
-
-`cloudflared` runs as a system service (`sudo systemctl status cloudflared`). Config at `/etc/cloudflared/config.yml`. Tunnel credentials at `/etc/cloudflared/*.json`. No ports need to be forwarded on the router — the tunnel is outbound-only.
-
-To restart the tunnel:
-```bash
-sudo systemctl restart cloudflared
-```
+Telegram-based scheduling assistant. No public web surface — all booking management happens via Telegram. External attendees book using Google Calendar's native appointment scheduling feature. Runs as systemd user service `scout-schedule`.
 
 ### Running
 
 ```bash
-# Start/restart the Flask app
+# Start/restart the Telegram bot
 systemctl --user restart scout-schedule
 
-# Local dev
-flask --app schedule run --port 5001
+# Check calendar notification timer
+systemctl --user status scout-calendar-notify.timer
 ```
 
 ### Module responsibilities
 
-- **`schedule.py`** — Flask app. Routes: `GET /` (booking page), `POST /book` (create event), `GET /booked` (confirmation), `POST /telegram-webhook` (agent entry point).
-- **`calendar_api.py`** — Google Calendar helpers using a separate `calendar_token.pickle` OAuth token (scope: `calendar`). Key functions: `get_free_slots()`, `create_booking()`, `get_upcoming_bookings()`, `reschedule_booking()`, `cancel_booking()`.
-- **`telegram_bot.py`** — Claude agent (`claude-opus-4-6`) with 4 tools: `list_bookings`, `reschedule_booking`, `cancel_booking`, `email_participant`. In-memory conversation history (last 20 messages per chat, resets on service restart). Only responds to `TELEGRAM_SCHEDULER_CHAT_ID`.
-- **`telegram_notifier.py`** — One-way notification helper used by `schedule.py` on new bookings.
-
-### Availability logic
-
-- Mon–Fri, 10:00am–3:00pm PT (last slot starts 2:30pm), 30-min slots
-- Uses `events.list` (not freebusy API) across all calendars on the account so all-day and multi-day events are excluded from blocking — only timed events block slots
-- `transparency: "transparent"` events (marked Free) are also skipped
+- **`telegram_bot.py`** — Standalone long-polling Claude agent (`claude-opus-4-6`) with 4 tools: `list_bookings`, `reschedule_booking`, `cancel_booking`, `email_participant`. In-memory conversation history (last 20 messages per chat, resets on service restart). Only responds to `TELEGRAM_SCHEDULER_CHAT_ID`. Run directly as `python3 telegram_bot.py`.
+- **`calendar_api.py`** — Google Calendar helpers using a separate `calendar_token.pickle` OAuth token (scope: `calendar`). Key functions: `get_upcoming_bookings()`, `reschedule_booking()`, `cancel_booking()`.
+- **`calendar_notify.py`** — Oneshot script run every 5 min by `scout-calendar-notify.timer`. Polls Google Calendar for new events with external attendees; sends Telegram notification via `telegram_notifier`. State tracked in `logs/calendar_notify_state.json`.
+- **`telegram_notifier.py`** — One-way Telegram notification helper used by `calendar_notify.py`.
 
 ### Calendar event details
 
-- Summary format: `Logan Hartford <> {attendee_name}`
-- Reminders: event created with empty overrides, then patched for organizer only (5-min popup). Attendees receive no reminder from our code.
 - `sendUpdates="all"` on insert/update/delete so Google Calendar handles invite/reschedule/cancellation emails automatically
 
 ### Required secrets
@@ -162,29 +143,6 @@ flask --app schedule run --port 5001
 ANTHROPIC_API_KEY
 TELEGRAM_SCHEDULER_BOT_TOKEN
 TELEGRAM_SCHEDULER_CHAT_ID
-WEBHOOK_SECRET          # validates incoming Telegram webhook POSTs
 ```
 
 `calendar_token.pickle` — OAuth token for Google Calendar. Must be generated locally (browser required). Uses same `credentials.json` as Gmail but separate token file and scope.
-
-### SSL
-
-Certificate issued via Let's Encrypt using the Cloudflare DNS challenge (no inbound ports required). Cert lives at `/etc/letsencrypt/live/meet.lhartford.com/`. Auto-renewal is handled by certbot's systemd timer using the Cloudflare API token at `/etc/letsencrypt/cloudflare.ini`.
-
-Nginx is installed and configured at `/etc/nginx/sites-available/meet.lhartford.com` but traffic arrives via the Cloudflare Tunnel, not directly through Nginx.
-
-### Re-register Telegram webhook (after token rotation)
-
-```bash
-source venv/bin/activate
-python3 -c "
-import os, requests
-from dotenv import load_dotenv
-load_dotenv()
-r = requests.post(
-    f'https://api.telegram.org/bot{os.getenv(\"TELEGRAM_SCHEDULER_BOT_TOKEN\")}/setWebhook',
-    data={'url': 'https://meet.lhartford.com/telegram-webhook', 'secret_token': os.getenv('WEBHOOK_SECRET')}
-)
-print(r.json())
-"
-```
