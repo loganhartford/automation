@@ -5,7 +5,6 @@ Usage:
     python3 rerun.py 25                                 # re-run 25 most recent
     python3 rerun.py 25 --summary                       # include per-company breakdown
     python3 rerun.py 25 --email                         # send dealbreaker report email when done
-    python3 rerun.py 25 --full                          # also regenerate full reports for companies that pass
     python3 rerun.py --before 2026-05-01                # re-run all companies added before May 1
     python3 rerun.py --before 2026-05-01 --email --summary
     python3 rerun.py 500 --guard                        # enable cost guardrails (default budget: $70)
@@ -14,7 +13,7 @@ Usage:
 import json
 import sys
 from db import init_db, get_recent_companies, update_company
-from evaluate import research_company, check_dealbreakers, generate_report, research_for_report, _reset_usage, _current_cost, CreditExhaustedError
+from evaluate import research_company, check_dealbreakers, _reset_usage, _current_cost, CreditExhaustedError
 
 
 class GuardAbort(Exception):
@@ -60,7 +59,7 @@ def check_guards(records, total_companies, budget):
     return warnings
 
 
-def rerun(limit=None, before=None, summary=False, email=False, full=False, guard=False, budget=70.0):
+def rerun(limit=None, before=None, summary=False, email=False, guard=False, budget=70.0):
     init_db()
     companies = get_recent_companies(limit=limit, before=before)
     if not companies:
@@ -83,7 +82,9 @@ def rerun(limit=None, before=None, summary=False, email=False, full=False, guard
             description_hint = ""
             if existing_report_json:
                 existing = json.loads(existing_report_json)
-                description_hint = existing.get("_description", "")
+                hint = existing.get("_description", "")
+                if hint and not hint.lstrip().startswith("#"):
+                    description_hint = hint
 
             print(f"  Researching...")
             research_context = research_company(name, description_hint)
@@ -105,19 +106,12 @@ def rerun(limit=None, before=None, summary=False, email=False, full=False, guard
                 print(f"  -> Failed dealbreakers, updating db.\n")
                 update_company(name, passed=False, cost=_current_cost())
             else:
-                if full:
-                    print(f"  Researching for full report...")
-                    report_context = research_for_report(name, research_context)
-
-                    print(f"  Generating full report...")
-                    report = generate_report(name, description, dealbreaker_results, report_context)
-                    outcome = "passed:full"
-                else:
-                    report = {"dealbreakers": dealbreaker_results}
-                    outcome = "passed:dealbreakers"
-
-                report["_description"] = description
-                report["_discovery_context"] = research_context
+                report = {
+                    "_description": description,
+                    "_discovery_context": research_context,
+                    "dealbreakers": dealbreaker_results,
+                }
+                outcome = "passed"
                 update_company(name, passed=True, report=json.dumps(report), cost=_current_cost())
 
                 location = report.get("location", {}).get("answer", "dealbreaker-only")
@@ -186,9 +180,8 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     show_summary = "--summary" in args or "-s" in args
     send_email   = "--email"   in args or "-e" in args
-    full_report  = "--full"    in args
     use_guard    = "--guard"   in args or "-g" in args
-    args = [a for a in args if a not in ("--summary", "-s", "--email", "-e", "--full", "--guard", "-g")]
+    args = [a for a in args if a not in ("--summary", "-s", "--email", "-e", "--guard", "-g")]
 
     before = None
     if "--before" in args:
@@ -203,4 +196,4 @@ if __name__ == "__main__":
         args = args[:idx] + args[idx + 2:]
 
     limit = int(args[0]) if args else None
-    rerun(limit=limit, before=before, summary=show_summary, email=send_email, full=full_report, guard=use_guard, budget=budget)
+    rerun(limit=limit, before=before, summary=show_summary, email=send_email, guard=use_guard, budget=budget)

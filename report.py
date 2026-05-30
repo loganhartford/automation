@@ -18,6 +18,9 @@ DEALBREAKER_LABELS = {
 
 REPORT_LABELS = {
     "company_size": "Company Size",
+    "billion_dollar_potential": "Billion Dollar Potential",
+    "growing_quickly": "Growing Quickly",
+    "solves_real_problem": "Solves Real Problem",
     "monopoly_potential": "Monopoly Potential",
     "novelty": "Novelty",
     "breakthrough_vs_incremental": "Breakthrough vs Incremental",
@@ -47,6 +50,7 @@ _STYLES = """
         .report-answer { margin: 0; color: #333; }
         .assessment { font-size: 12px; font-weight: bold; color: #666; margin-left: 6px; }
         .action-link { display: inline-block; margin-top: 16px; font-weight: bold; color: #1a73e8; text-decoration: none; }
+        .discovery { color: #333; font-size: 14px; line-height: 1.7; margin-bottom: 16px; white-space: pre-line; }
         hr { border: none; border-top: 1px solid #eee; margin: 40px 0; }
     </style>
 """
@@ -63,7 +67,9 @@ def _full_report_link(company_id):
 def _render_company_html(company_id, name, first_seen, source, report_json, cost=None):
     report = json.loads(report_json)
     description = report.pop("_description", None)
-    report.pop("_discovery_context", None)
+    if description and description.lstrip().startswith("#"):
+        description = None
+    discovery_context = report.pop("_discovery_context", None)
     dealbreakers = report.pop("dealbreakers", None)
     location = report.pop("location", {}).get("answer", "Unknown")
     mission = report.pop("mission", {}).get("answer", None)
@@ -104,6 +110,8 @@ def _render_company_html(company_id, name, first_seen, source, report_json, cost
         html += "<h3>Analysis</h3>"
         html += "".join(report_items)
     else:
+        if discovery_context:
+            html += f'<div class="discovery">{escape(discovery_context)}</div>'
         link = _full_report_link(company_id)
         if link:
             html += (

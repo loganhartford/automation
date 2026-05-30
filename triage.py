@@ -17,9 +17,11 @@ OLLAMA_MODEL = "qwen3:8b"
 LOG_FILE = "logs/triage.log"
 SEEN_IDS_FILE = "logs/triage_seen.json"
 URGENT_STATE_FILE = "logs/triage_urgent_pending.json"
+ARCHIVE_LOG_FILE = "logs/triage_archive_log.json"
+ARCHIVE_DAYS = 7
 
 # Hard rules — bypass Ollama entirely
-ALWAYS_URGENT_SENDERS = {
+ALWAYS_TIME_SENSITIVE_SENDERS = {
     "laurie.goren@therapysecure.com",
 }
 
@@ -54,7 +56,7 @@ log = logging.getLogger(__name__)
 SYSTEM_PROMPT = """\
 You are an email triage assistant. For each email choose one of four actions:
 
-"urgent"      — Requires action or response soon. Use for:
+"time_sensitive" — Requires action or response soon. Use for:
                 - Emails confirmed as replies to messages the user sent (indicated by
                   "Is a reply: yes" in the prompt — trust this signal even if the sender
                   looks like a business or the subject looks like spam)
@@ -63,12 +65,14 @@ You are an email triage assistant. For each email choose one of four actions:
                 - Genuine fraud alerts (unauthorized charge detected, account locked)
                 DO NOT use for: security notifications, login codes, informational newsletters,
                 account update notices, or payment confirmations — those are KEEP or TRASH.
+                DO NOT use "urgent" — the correct action string is "time_sensitive".
 
 "keep"        — Worth reading but not time-sensitive. Use for:
                 - Email from a real individual person
                 - Security/login codes and confirmation codes (user is already looking for them)
                 - Login/new-device notifications (informational, no action needed)
                 - Flight and travel booking confirmations (not urgent unless same-day)
+                - Travel insurance policy documents (contain plan details the user needs)
                 - Non-Amazon shipping/tracking emails for parcels
                 - Newsletters and content the user actively reads
                 - Calendar invites and meeting updates
@@ -138,6 +142,40 @@ def check_ollama_health():
         return False
 
 
+def _load_archive_log():
+    if os.path.exists(ARCHIVE_LOG_FILE):
+        with open(ARCHIVE_LOG_FILE) as f:
+            return json.load(f)
+    return []
+
+
+def _save_archive_log(entries):
+    with open(ARCHIVE_LOG_FILE, "w") as f:
+        json.dump(entries, f)
+
+
+def _append_archive_log(email_id, sender, subject):
+    entries = _load_archive_log()
+    entries.append({"id": email_id, "sender": sender, "subject": subject, "archived_at": datetime.now().isoformat()})
+    _save_archive_log(entries)
+
+
+def _purge_stale_archive(session):
+    """Move archive-staged emails older than ARCHIVE_DAYS to Deleted Items."""
+    entries = _load_archive_log()
+    if not entries:
+        return
+    cutoff = datetime.now().timestamp() - ARCHIVE_DAYS * 86400
+    remaining = []
+    for e in entries:
+        if datetime.fromisoformat(e["archived_at"]).timestamp() < cutoff:
+            success = outlook.move_to_trash(session, e["id"])
+            log.info(f"[PURGE ] {e['sender']} | {e['subject']!r} | {'ok' if success else 'not found'}")
+        else:
+            remaining.append(e)
+    _save_archive_log(remaining)
+
+
 def _load_seen_ids():
     if os.path.exists(SEEN_IDS_FILE):
         with open(SEEN_IDS_FILE) as f:
@@ -154,8 +192,8 @@ def pre_filter(sender, subject):
     """Hard rules that bypass Ollama. Returns decision dict or None."""
     s = sender.lower()
 
-    if s in ALWAYS_URGENT_SENDERS:
-        return {"action": "urgent", "reason": "hard rule: always urgent sender"}
+    if s in ALWAYS_TIME_SENSITIVE_SENDERS:
+        return {"action": "time_sensitive", "reason": "hard rule: always time-sensitive sender"}
 
     if s in ALWAYS_KEEP_SENDERS:
         return {"action": "keep", "reason": "hard rule: always keep sender"}
@@ -175,7 +213,7 @@ def _ask_ollama_once(sender, subject, body_preview, has_unsubscribe, is_reply=Fa
         f"Is a reply: {'yes' if is_reply else 'no'}\n"
         f"Has unsubscribe link: {'yes' if has_unsubscribe else 'no'}\n"
         f"Body preview:\n{body_preview}\n\n"
-        'Respond ONLY with JSON: {"action": "urgent|keep|trash|unsubscribe", "reason": "one sentence"}'
+        'Respond ONLY with JSON: {"action": "time_sensitive|keep|trash|unsubscribe", "reason": "one sentence"}'
     )
     payload = {
         "model": OLLAMA_MODEL,
@@ -191,6 +229,8 @@ def _ask_ollama_once(sender, subject, body_preview, has_unsubscribe, is_reply=Fa
     resp = requests.post(f"{OLLAMA_BASE}/api/chat", json=payload, timeout=60)
     resp.raise_for_status()
     result = json.loads(resp.json()["message"]["content"])
+    if result.get("action") not in ("time_sensitive", "keep", "trash", "unsubscribe"):
+        result["action"] = "keep"
     if result.get("action") == "unsubscribe" and not has_unsubscribe:
         result["action"] = "trash"
     return result
@@ -227,22 +267,30 @@ def _execute_action(session, email_obj, action):
     msg_id = email_obj["id"]
     if action == "unsubscribe":
         success, method = outlook.do_unsubscribe(session, email_obj)
-        log.info(f"  Unsubscribed via {method}" if success else f"  Unsubscribe failed ({method}), trashing anyway")
-        return outlook.move_to_trash(session, msg_id)
+        log.info(f"  Unsubscribed via {method}" if success else f"  Unsubscribe failed ({method}), archiving anyway")
+        ok = outlook.move_to_archive(session, msg_id)
+        if ok:
+            _append_archive_log(msg_id, email_obj["sender"], email_obj["subject"])
+        return ok
     elif action == "trash":
-        return outlook.move_to_trash(session, msg_id)
-    return True  # keep / urgent — no action needed
+        ok = outlook.move_to_archive(session, msg_id)
+        if ok:
+            _append_archive_log(msg_id, email_obj["sender"], email_obj["subject"])
+        return ok
+    return True  # keep / time_sensitive — no action needed
 
 
 def triage_outlook(review_entries, seen_ids):
     """Run triage on new emails. Updates seen_ids in place."""
     log.info("Starting Outlook triage...")
     session = outlook.get_session(interactive=False)
-    emails = outlook.get_emails(session, max_emails=200)
+    if not DRY_RUN:
+        _purge_stale_archive(session)
+    emails = outlook.get_emails(session, max_emails=200, min_age_hours=24)
     new_emails = [e for e in emails if e["id"] not in seen_ids]
     log.info(f"Fetched {len(emails)} emails, {len(new_emails)} not yet processed")
 
-    counts = {"urgent": 0, "keep": 0, "trash": 0, "unsubscribe": 0, "error": 0}
+    counts = {"time_sensitive": 0, "keep": 0, "trash": 0, "unsubscribe": 0, "error": 0}
     for email in new_emails:
         subject = email["subject"]
         sender = email["sender"]
@@ -255,7 +303,7 @@ def triage_outlook(review_entries, seen_ids):
             action = decision.get("action", "keep")
             reason = decision.get("reason", "")
 
-            labels = {"trash": "TRASH", "unsubscribe": "UNSUB ", "keep": "KEEP ", "urgent": "URGENT"}
+            labels = {"trash": "TRASH", "unsubscribe": "UNSUB ", "keep": "KEEP ", "time_sensitive": "TIME S"}
             label = labels.get(action, "KEEP ")
             votes = decision.get("votes")
             vote_str = f" [{','.join(votes)}]" if votes else ""
@@ -273,9 +321,9 @@ def triage_outlook(review_entries, seen_ids):
                 "votes": votes,
             })
 
-            if action == "urgent":
+            if action == "time_sensitive":
                 _notify_telegram(
-                    f"📬 Urgent: {sender}\n{subject}\n\n{body[:200]}"
+                    f"📬 Time-sensitive: {sender}\n{subject}\n\n{body[:200]}"
                 )
                 _append_urgent_email({
                     "id": email["id"],
@@ -308,14 +356,14 @@ def parse_review_file(path):
     with open(path) as f:
         for line in f:
             line = line.rstrip("\n")
-            if re.match(r"^\[(TRASH|UNSUB |KEEP |URGENT)\]", line):
+            if re.match(r"^\[(TRASH|UNSUB |KEEP |TIME S)\]", line):
                 if current:
                     entries.append(current)
                 current = {"header": line, "id": None, "feedback": "", "action": "keep"}
                 label_m = re.match(r"^\[([\w ]+)\]", line)
                 if label_m:
                     label = label_m.group(1).strip()
-                    current["action"] = {"TRASH": "trash", "UNSUB": "unsubscribe", "KEEP": "keep", "URGENT": "urgent"}.get(label, "keep")
+                    current["action"] = {"TRASH": "trash", "UNSUB": "unsubscribe", "KEEP": "keep", "TIME S": "time_sensitive"}.get(label, "keep")
                 sender_m = re.match(r"^\[[\w ]+\] (.+?)(?:\s\[has unsubscribe link\])?\s*\|\s*\"(.*)\"", line)
                 if sender_m:
                     current["sender"] = sender_m.group(1).strip()
@@ -355,8 +403,9 @@ def execute_review(review_path):
         sender = entry.get("sender", "")
         subject = entry.get("subject", "")
 
-        if action in ("keep", "urgent"):
-            log.info(f"[{action.upper():<6}] (no action needed) | {sender} | {subject!r}")
+        if action in ("keep", "time_sensitive"):
+            _display = {"keep": "KEEP  ", "time_sensitive": "TIME S"}.get(action, action.upper())
+            log.info(f"[{_display}] (no action needed) | {sender} | {subject!r}")
             executed += 1
             continue
 
@@ -416,7 +465,12 @@ def main():
             print(f"Review file not found: {EXECUTE_REVIEW}")
             sys.exit(1)
         log.info(f"=== Executing review file: {EXECUTE_REVIEW} ===")
-        execute_review(EXECUTE_REVIEW)
+        try:
+            execute_review(EXECUTE_REVIEW)
+        except Exception as e:
+            log.error(f"Execute review failed: {e}")
+            _notify_telegram(f"⚠️ Triage execute-review failed: {e}")
+            sys.exit(1)
         return
 
     if not check_ollama_health():
@@ -433,7 +487,7 @@ def main():
 
     try:
         counts = triage_outlook(review_entries, seen_ids)
-    except RuntimeError as e:
+    except Exception as e:
         log.error(f"Triage failed: {e}")
         _notify_telegram(f"⚠️ Triage failed: {e}")
         sys.exit(1)
@@ -445,7 +499,7 @@ def main():
     # counts_gmail = triage_gmail(review_entries, seen_ids)
 
     log.info(
-        f"=== Done | Urgent: {counts.get('urgent',0)} | Kept: {counts.get('keep',0)} | "
+        f"=== Done | Time-sensitive: {counts.get('time_sensitive',0)} | Kept: {counts.get('keep',0)} | "
         f"Trashed: {counts.get('trash',0)} | Unsubbed: {counts.get('unsubscribe',0)} | "
         f"Errors: {counts.get('error',0)} ==="
     )

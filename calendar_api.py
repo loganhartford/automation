@@ -171,6 +171,45 @@ def get_upcoming_bookings(days_ahead=30):
     return bookings
 
 
+def get_todays_events():
+    """Return all timed, non-cancelled events for today across all calendars in PT."""
+    service = get_calendar_service()
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.datetime.now(tz)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+
+    seen_ids = set()
+    events = []
+    cal_list = service.calendarList().list().execute()
+    for cal in cal_list.get("items", []):
+        result = service.events().list(
+            calendarId=cal["id"],
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+        ).execute()
+        for e in result.get("items", []):
+            if e.get("status") == "cancelled":
+                continue
+            if "dateTime" not in e.get("start", {}):
+                continue
+            if e["id"] in seen_ids:
+                continue
+            seen_ids.add(e["id"])
+            start_dt = datetime.datetime.fromisoformat(e["start"]["dateTime"]).astimezone(tz)
+            events.append({
+                "summary": e.get("summary", "Untitled"),
+                "start_pt": start_dt.strftime("%-I:%M %p"),
+                "attendees": e.get("attendees", []),
+                "description": e.get("description", ""),
+            })
+
+    events.sort(key=lambda e: e["start_pt"])
+    return events
+
+
 def reschedule_booking(event_id, new_start_dt, new_end_dt):
     """Update an existing calendar event to a new time and notify attendees."""
     service = get_calendar_service()

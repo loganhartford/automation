@@ -35,10 +35,10 @@ executor = ThreadPoolExecutor(max_workers=1)
 conversations: dict[int, list] = {}
 
 SYSTEM_PROMPT = """\
-You are Logan's email assistant on Telegram. You help him manage urgent emails that need his attention.
+You are Logan's email assistant on Telegram. You help him manage time-sensitive emails that need his attention.
 
 When he messages you:
-- List pending urgent emails if he asks or says something like "what's up" / "any emails"
+- List pending time-sensitive emails if he asks or says something like "what's up" / "any emails"
 - When he says what to reply (e.g. "tell them I'll be there", "say I'm not interested"), compose a full reply draft
 - Show the draft clearly and wait for explicit approval ("send it", "yes", "looks good", "send") before calling send_reply
 - Revise the draft if he asks for changes
@@ -56,7 +56,7 @@ Never call send_reply without explicit approval. Use plain text only — no mark
 TOOLS = [
     {
         "name": "list_pending_emails",
-        "description": "List all pending urgent emails awaiting action",
+        "description": "List all pending time-sensitive emails awaiting action",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
@@ -115,7 +115,7 @@ def _execute_tool(name, inp):
     if name == "list_pending_emails":
         emails = _load_pending()
         if not emails:
-            return "No pending urgent emails."
+            return "No pending time-sensitive emails."
         parts = []
         for i, e in enumerate(emails, 1):
             parts.append(

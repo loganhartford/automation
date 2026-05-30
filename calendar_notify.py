@@ -4,6 +4,7 @@ import datetime
 import logging
 import pytz
 from dotenv import load_dotenv
+from google.auth.exceptions import RefreshError
 from googleapiclient.errors import HttpError
 from calendar_api import get_calendar_service
 from telegram_notifier import notify
@@ -54,8 +55,14 @@ def run():
             singleEvents=True,
             orderBy="updated",
         ).execute()
+    except RefreshError as e:
+        msg = "Calendar auth token expired — re-authorization required.\nDelete calendar_token.pickle and run the OAuth flow again."
+        logging.error("calendar_notify: auth refresh failed: %s", e)
+        notify(msg)
+        return
     except HttpError as e:
         logging.error("calendar_notify: Calendar API error: %s", e)
+        notify(f"Calendar notify error: {e}")
         return
 
     for event in result.get("items", []):

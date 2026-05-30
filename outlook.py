@@ -162,16 +162,23 @@ def do_unsubscribe(session, email):
     return False, "failed"
 
 
-def get_emails(session, max_emails=50, unread_only=False):
+def get_emails(session, max_emails=50, unread_only=False, min_age_hours=0):
     """Return list of inbox messages as dicts with id/subject/sender/body_preview/unsubscribe."""
+    from datetime import datetime, timezone, timedelta
     url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages"
     params = {
         "$select": "id,subject,from,body,internetMessageHeaders",
         "$top": max_emails,
         "$orderby": "receivedDateTime desc",
     }
+    filters = []
     if unread_only:
-        params["$filter"] = "isRead eq false"
+        filters.append("isRead eq false")
+    if min_age_hours > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
+        filters.append(f"receivedDateTime le {cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    if filters:
+        params["$filter"] = " and ".join(filters)
     resp = session.get(url, params=params)
     resp.raise_for_status()
 
@@ -210,6 +217,13 @@ def send_draft(session, draft_id):
     url = f"{GRAPH_BASE}/me/messages/{draft_id}/send"
     resp = session.post(url)
     return resp.ok
+
+
+def move_to_archive(session, message_id):
+    """Move message to Archive folder. Returns True on success."""
+    url = f"{GRAPH_BASE}/me/messages/{message_id}/move"
+    resp = session.post(url, json={"destinationId": "archive"})
+    return resp.ok or resp.status_code == 404
 
 
 def move_to_trash(session, message_id):

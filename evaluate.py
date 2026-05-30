@@ -35,9 +35,6 @@ Evaluate the company on each dimension below."""
 DEALBREAKER_ORDER = [
     "developing_hardware",
     "is_startup",
-    "billion_dollar_potential",
-    "growing_quickly",
-    "solves_real_problem",
 ]
 
 DEALBREAKER_SPECS = {
@@ -65,11 +62,16 @@ DEALBREAKER_SPECS = {
 
 DISCOVERY_PROMPT = """Research {name}.{context_hint}
 
-Use ONE web search. Find: what they actually build (specific product/technology), founding year, funding stage, approximate size, and the problem they solve.
+Use up to TWO web searches. Build a clear picture of:
+- What exactly they build — be specific about the physical product, technology, or system (not marketing language)
+- The core problem they're solving and who the customer is
+- What makes their approach novel or differentiated from alternatives
+- Founding year, funding stage and total raised, approximate headcount
+- Any notable traction: customers, contracts, deployments, or partnerships
 
-If the company name is ambiguous, search with context to find the hardware/deep-tech startup, not an unrelated business with the same name.
+If the company name is ambiguous, use your first search to confirm you're looking at the hardware/deep-tech startup, not an unrelated business with the same name.
 
-Return a concise factual summary (150–200 words)."""
+Return a factual summary of 300–400 words. Write in plain prose — no markdown headers, no bullet points, no formatting. Lead with a concrete description of the product — this is the most important part."""
 
 PREFILTER_PROMPT = """You are doing a quick pre-screening of a startup to decide whether it might be a hardware company worth researching further.
 
@@ -85,11 +87,8 @@ If there is ANY doubt — biotech, medtech, defense, energy, manufacturing, or a
 When in doubt, always return "unknown". A false pass costs a few cents. A false reject loses a good company."""
 
 DEALBREAKER_MODELS = {
-    "developing_hardware":      "claude-haiku-4-5-20251001",
-    "is_startup":               "claude-haiku-4-5-20251001",
-    "billion_dollar_potential": "claude-sonnet-4-6",
-    "growing_quickly":          "claude-haiku-4-5-20251001",
-    "solves_real_problem":      "claude-haiku-4-5-20251001",
+    "developing_hardware": "claude-sonnet-4-6",
+    "is_startup":          "claude-haiku-4-5-20251001",
 }
 
 DEALBREAKER_EVAL_PROMPT = """You are evaluating a startup for a senior embedded/firmware engineer considering companies to join.
@@ -127,6 +126,9 @@ FULL_REPORT_REQUIRED_FIELDS = {
     "location",
     "mission",
     "company_size",
+    "billion_dollar_potential",
+    "growing_quickly",
+    "solves_real_problem",
     "monopoly_potential",
     "novelty",
     "breakthrough_vs_incremental",
@@ -256,9 +258,9 @@ def discover_company(name: str, description_hint: str = "") -> str:
     context_hint = f" Context: {description_hint}" if description_hint else ""
     prompt = DISCOVERY_PROMPT.format(name=name, context_hint=context_hint)
     messages = [{"role": "user", "content": prompt}]
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}]
+    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 2}]
     try:
-        result, _ = _agentic_search_loop(messages, tools, max_tokens=1024)
+        result, _ = _agentic_search_loop(messages, tools, max_tokens=2048)
         print(f"  Discovery complete: {len(result)} chars")
         return result
     except Exception as e:
@@ -426,6 +428,33 @@ def generate_report(name: str, description: str, dealbreaker_results: dict, rese
                         },
                         "required": ["answer", "assessment"]
                     },
+                    "billion_dollar_potential": {
+                        "type": "object",
+                        "description": "Does this company have billion-dollar potential? Consider total addressable market size, strategic defensibility (proprietary tech, network effects, moat), and real traction (named customers, contracts, deployments). Do not treat small seed funding as a negative signal.",
+                        "properties": {
+                            "answer": {"type": "string"},
+                            "assessment": {"type": "string", "enum": ["good", "neutral", "bad"]}
+                        },
+                        "required": ["answer", "assessment"]
+                    },
+                    "growing_quickly": {
+                        "type": "object",
+                        "description": "Is this company growing quickly? Look for recent funding rounds (last 18 months), headcount growth, new customer wins, product launches, or high-frequency press coverage.",
+                        "properties": {
+                            "answer": {"type": "string"},
+                            "assessment": {"type": "string", "enum": ["good", "neutral", "bad"]}
+                        },
+                        "required": ["answer", "assessment"]
+                    },
+                    "solves_real_problem": {
+                        "type": "object",
+                        "description": "Does this company solve a real, significant pain point with clear customer demand? Look for named customers, contracts, pilots, partnerships, or direct validation.",
+                        "properties": {
+                            "answer": {"type": "string"},
+                            "assessment": {"type": "string", "enum": ["good", "neutral", "bad"]}
+                        },
+                        "required": ["answer", "assessment"]
+                    },
                     "monopoly_potential": {
                         "type": "object",
                         "description": "Does this have the potential to be a monopoly in its space?",
@@ -490,7 +519,7 @@ def generate_report(name: str, description: str, dealbreaker_results: dict, rese
                         "required": ["answer", "assessment"]
                     }
                 },
-                "required": ["location", "mission", "company_size", "monopoly_potential", "novelty", "breakthrough_vs_incremental", "timing", "unique_opportunity", "learning_opportunities", "transferable_skills"]
+                "required": ["location", "mission", "company_size", "billion_dollar_potential", "growing_quickly", "solves_real_problem", "monopoly_potential", "novelty", "breakthrough_vs_incremental", "timing", "unique_opportunity", "learning_opportunities", "transferable_skills"]
             }
         }],
         tool_choice={"type": "tool", "name": "save_report"}
