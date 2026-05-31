@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
@@ -10,6 +12,8 @@ import requests
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+
+from ynab_report import generate_monthly_report
 
 load_dotenv()
 
@@ -36,6 +40,11 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger(__name__)
+
+REPORT_KEYWORDS = (
+    "monthly report", "financial report", "send me the report",
+    "generate report", "monthly summary", "finance report",
+)
 
 executor = ThreadPoolExecutor(max_workers=1)
 conversations: dict[int, list] = {}
@@ -113,7 +122,16 @@ TOOLS = [
 
 
 def _ynab_get(path):
-    r = requests.get(f"{YNAB_BASE}{path}", headers=YNAB_HEADERS)
+    try:
+        r = requests.get(f"{YNAB_BASE}{path}", headers=YNAB_HEADERS, timeout=15)
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Cannot reach YNAB API — check internet connection.")
+    except requests.exceptions.Timeout:
+        raise RuntimeError("YNAB API timed out.")
+    if r.status_code == 401:
+        raise RuntimeError("YNAB authentication failed — YNAB_TOKEN may be expired or invalid.")
+    if r.status_code == 429:
+        raise RuntimeError("YNAB rate limit hit — try again in a moment.")
     r.raise_for_status()
     return r.json()["data"]
 
@@ -269,12 +287,18 @@ def _execute_tool(name, inp):
 
 
 def _ollama_chat(messages):
-    r = requests.post(
-        f"{OLLAMA_BASE}/v1/chat/completions",
-        json={"model": OLLAMA_MODEL, "messages": messages, "tools": TOOLS, "stream": False},
-        timeout=120,
-    )
-    r.raise_for_status()
+    try:
+        r = requests.post(
+            f"{OLLAMA_BASE}/v1/chat/completions",
+            json={"model": OLLAMA_MODEL, "messages": messages, "tools": TOOLS, "stream": False},
+            timeout=120,
+        )
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Ollama is not running — start it with: ollama serve")
+    except requests.exceptions.Timeout:
+        raise RuntimeError("Ollama timed out after 120s — model may be overloaded.")
+    if r.status_code != 200:
+        raise RuntimeError(f"Ollama returned HTTP {r.status_code}: {r.text[:200]}")
     return r.json()["choices"][0]
 
 
@@ -320,6 +344,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("Working on it...")
 
+    text_lower = text.lower()
+    if any(kw in text_lower for kw in REPORT_KEYWORDS):
+        month_match = re.search(r'(\d{4}-\d{2})', text)
+        month_arg = month_match.group(1) if month_match else None
+        try:
+            loop = asyncio.get_event_loop()
+            report = await loop.run_in_executor(executor, generate_monthly_report, month_arg)
+            report = report.replace("**", "").replace("*", "")
+            for i in range(0, len(report), 4000):
+                await update.message.reply_text(report[i:i + 4000])
+        except RuntimeError as e:
+            log.error(f"Report error: {e}")
+            await update.message.reply_text(f"Error generating report: {e}")
+        except Exception as e:
+            log.error(f"Report unexpected error: {e}\n{traceback.format_exc()}")
+            await update.message.reply_text(f"Unexpected error: {type(e).__name__}: {e}")
+        return
+
     history = conversations[chat_id]
     history.append({"role": "user", "content": text})
     if len(history) > 20:
@@ -332,9 +374,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply = reply.replace("**", "").replace("*", "")
             for i in range(0, len(reply), 4000):
                 await update.message.reply_text(reply[i:i + 4000])
-    except Exception as e:
-        log.error(f"Agent error: {e}")
+        else:
+            await update.message.reply_text("Got an empty response — please try again.")
+    except RuntimeError as e:
+        log.error(f"Runtime error: {e}")
         await update.message.reply_text(f"Error: {e}")
+    except Exception as e:
+        log.error(f"Unexpected error: {e}\n{traceback.format_exc()}")
+        await update.message.reply_text(f"Unexpected error: {type(e).__name__}: {e}")
+
+
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    log.error(f"Telegram error: {context.error}\n{traceback.format_exc()}")
+    if isinstance(update, Update) and update.effective_chat and CHAT_ID:
+        try:
+            await context.bot.send_message(CHAT_ID, f"Bot error: {context.error}")
+        except Exception:
+            pass
 
 
 def main():
@@ -347,6 +403,7 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(handle_error)
     log.info(f"YNAB bot started (chat_id={CHAT_ID or 'NOT SET — send a message to get yours'})")
     app.run_polling(drop_pending_updates=True)
 
