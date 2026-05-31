@@ -1,12 +1,32 @@
 import json
 import os
+import requests
+import traceback
 from datetime import datetime
 from html import escape
 from dotenv import load_dotenv
+from google.auth.exceptions import RefreshError
 from db import get_unreported_companies, mark_as_reported, get_source_stats
 from gmail import send_report
+from repair import save_error_context, REPAIR_HINT
 
 load_dotenv()
+
+
+def _notify_telegram(msg):
+    """Fire-and-forget Telegram alert via the scout bot."""
+    token = os.getenv("TELEGRAM_SCOUT_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_SCOUT_CHAT_ID")
+    if not token or not chat_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg},
+            timeout=10,
+        )
+    except Exception:
+        pass
 
 DEALBREAKER_LABELS = {
     "developing_hardware": "Developing Hardware?",
@@ -226,4 +246,25 @@ def send_single_company_report(name, first_seen, source, report_json):
 
 
 if __name__ == "__main__":
-    generate_weekly_report()
+    try:
+        generate_weekly_report()
+    except RefreshError:
+        # Gmail auth is broken — Telegram only, email won't work.
+        _notify_telegram(
+            "⚠️ Scout report: Gmail auth token expired.\n"
+            "Delete token.pickle and re-run the OAuth flow to restore."
+        )
+        print("Gmail auth token expired — Telegram alert sent.")
+    except Exception as e:
+        tb = traceback.format_exc()
+        save_error_context("report.py", type(e).__name__, str(e), tb)
+        _notify_telegram(f"⚠️ Scout report failed: {type(e).__name__}: {e}\n\n{REPAIR_HINT}")
+        try:
+            send_report(
+                to_address="logan.hartford@outlook.com",
+                subject="Startup Scout - Report Failed",
+                markdown_body=f"report.py crashed with the following error:\n\n{tb}",
+            )
+        except Exception:
+            pass
+        raise

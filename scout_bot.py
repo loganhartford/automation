@@ -1,5 +1,7 @@
+import asyncio
 import json
 import os
+import subprocess
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update
@@ -61,6 +63,52 @@ def _format_report(name: str, report: dict) -> str:
 async def _reply(update: Update, text: str):
     for i in range(0, len(text), 4000):
         await update.message.reply_text(text[i:i + 4000], parse_mode="HTML")
+
+
+async def _reply_plain(update: Update, text: str):
+    for i in range(0, len(text), 4000):
+        await update.message.reply_text(text[i:i + 4000])
+
+
+async def _handle_repair(update: Update, command: str):
+    from repair import load_error_context, investigate, apply_fix
+    ctx = load_error_context()
+    if not ctx:
+        await update.message.reply_text("No recent error context found. An error must occur first.")
+        return
+
+    age_h = (datetime.now() - datetime.fromisoformat(ctx["timestamp"])).total_seconds() / 3600
+    header = f"Last error: {ctx['script']} — {ctx['error_type']} ({age_h:.1f}h ago)\n\n"
+
+    if command == "investigate":
+        await update.message.reply_text(f"Investigating {ctx['script']} error... (~1 min)")
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, investigate, ctx)
+        except subprocess.TimeoutExpired:
+            await update.message.reply_text("Timed out (>3 min). Try 'apply' to go straight to a fix.")
+            return
+        except Exception as e:
+            await update.message.reply_text(f"Claude error: {e}")
+            return
+        await _reply_plain(update, header + result)
+
+    elif command in ("apply", "apply fix"):
+        await update.message.reply_text(f"Fixing {ctx['script']} error... (~3 min)")
+        try:
+            loop = asyncio.get_event_loop()
+            output, diff = await loop.run_in_executor(None, apply_fix, ctx)
+        except subprocess.TimeoutExpired:
+            await update.message.reply_text("Timed out (>5 min).")
+            return
+        except Exception as e:
+            await update.message.reply_text(f"Claude error: {e}")
+            return
+        await _reply_plain(update, header + output)
+        if diff:
+            await _reply_plain(update, f"Changes:\n\n{diff}")
+        else:
+            await update.message.reply_text("No file changes were made.")
 
 
 async def _handle_full_report_request(update: Update, company_id: int):
@@ -127,6 +175,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name = update.message.text.strip()
     if not name:
+        return
+
+    cmd = name.lower()
+    if cmd in ("investigate", "apply", "apply fix"):
+        await _handle_repair(update, cmd)
         return
 
     if name.startswith("full_"):

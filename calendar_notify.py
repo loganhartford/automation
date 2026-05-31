@@ -98,4 +98,8 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except Exception as e:
+        logging.error("calendar_notify: unexpected error: %s", e)
+        notify(f"Calendar notify crashed unexpectedly: {type(e).__name__}: {e}")

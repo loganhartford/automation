@@ -2,8 +2,10 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import anthropic
 from dotenv import load_dotenv
@@ -111,6 +113,52 @@ def _remove_pending(email_id):
     _save_pending([e for e in _load_pending() if e["id"] != email_id])
 
 
+async def _reply_plain(update, text: str):
+    for i in range(0, len(text), 4000):
+        await update.message.reply_text(text[i:i + 4000])
+
+
+async def _handle_repair(update, command: str):
+    from repair import load_error_context, investigate, apply_fix
+    ctx = load_error_context()
+    if not ctx:
+        await update.message.reply_text("No recent error context found. An error must occur first.")
+        return
+
+    age_h = (datetime.now() - datetime.fromisoformat(ctx["timestamp"])).total_seconds() / 3600
+    header = f"Last error: {ctx['script']} — {ctx['error_type']} ({age_h:.1f}h ago)\n\n"
+
+    if command == "investigate":
+        await update.message.reply_text(f"Investigating {ctx['script']} error... (~1 min)")
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, investigate, ctx)
+        except subprocess.TimeoutExpired:
+            await update.message.reply_text("Timed out (>3 min). Try 'apply' to go straight to a fix.")
+            return
+        except Exception as e:
+            await update.message.reply_text(f"Claude error: {e}")
+            return
+        await _reply_plain(update, header + result)
+
+    elif command in ("apply", "apply fix"):
+        await update.message.reply_text(f"Fixing {ctx['script']} error... (~3 min)")
+        try:
+            loop = asyncio.get_event_loop()
+            output, diff = await loop.run_in_executor(None, apply_fix, ctx)
+        except subprocess.TimeoutExpired:
+            await update.message.reply_text("Timed out (>5 min).")
+            return
+        except Exception as e:
+            await update.message.reply_text(f"Claude error: {e}")
+            return
+        await _reply_plain(update, header + output)
+        if diff:
+            await _reply_plain(update, f"Changes:\n\n{diff}")
+        else:
+            await update.message.reply_text("No file changes were made.")
+
+
 def _execute_tool(name, inp):
     if name == "list_pending_emails":
         emails = _load_pending()
@@ -204,6 +252,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = update.message.text
+    cmd = text.strip().lower()
+    if cmd in ("investigate", "apply", "apply fix"):
+        await _handle_repair(update, cmd)
+        return
     if chat_id not in conversations:
         conversations[chat_id] = []
 

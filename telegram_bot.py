@@ -6,6 +6,7 @@ import pytz
 import anthropic
 import requests
 from dotenv import load_dotenv
+from google.auth.exceptions import RefreshError
 from calendar_api import get_upcoming_bookings, reschedule_booking, cancel_booking
 from gmail import send_calendar_email
 
@@ -79,33 +80,43 @@ TOOLS = [
 
 
 def _execute_tool(name, tool_input):
-    if name == "list_bookings":
-        days = tool_input.get("days_ahead", 30)
-        bookings = get_upcoming_bookings(days_ahead=days)
-        if not bookings:
-            return "No upcoming bookings."
-        return "\n".join(
-            f"- {b['summary']} | {b['start_pt']} | {b['attendee_email']} | id:{b['event_id']}"
-            for b in bookings
+    try:
+        if name == "list_bookings":
+            days = tool_input.get("days_ahead", 30)
+            bookings = get_upcoming_bookings(days_ahead=days)
+            if not bookings:
+                return "No upcoming bookings."
+            return "\n".join(
+                f"- {b['summary']} | {b['start_pt']} | {b['attendee_email']} | id:{b['event_id']}"
+                for b in bookings
+            )
+
+        if name == "reschedule_booking":
+            new_start = datetime.datetime.fromisoformat(tool_input["new_start_iso"])
+            new_end = new_start + datetime.timedelta(minutes=30)
+            reschedule_booking(tool_input["event_id"], new_start, new_end)
+            tz = pytz.timezone(TIMEZONE)
+            label = new_start.astimezone(tz).strftime("%a %b %-d at %-I:%M %p PT")
+            return f"Rescheduled to {label}. Calendar invite updated."
+
+        if name == "cancel_booking":
+            cancel_booking(tool_input["event_id"])
+            return "Booking cancelled. Attendee notified via Google Calendar."
+
+        if name == "email_participant":
+            send_calendar_email(tool_input["to_email"], tool_input["subject"], tool_input["body"])
+            return f"Email sent to {tool_input['to_email']}."
+
+        return f"Unknown tool: {name}"
+
+    except RefreshError:
+        return (
+            "Google Calendar auth token expired. "
+            "Delete calendar_token.pickle and re-run the OAuth flow on the server."
         )
-
-    if name == "reschedule_booking":
-        new_start = datetime.datetime.fromisoformat(tool_input["new_start_iso"])
-        new_end = new_start + datetime.timedelta(minutes=30)
-        reschedule_booking(tool_input["event_id"], new_start, new_end)
-        tz = pytz.timezone(TIMEZONE)
-        label = new_start.astimezone(tz).strftime("%a %b %-d at %-I:%M %p PT")
-        return f"Rescheduled to {label}. Calendar invite updated."
-
-    if name == "cancel_booking":
-        cancel_booking(tool_input["event_id"])
-        return "Booking cancelled. Attendee notified via Google Calendar."
-
-    if name == "email_participant":
-        send_calendar_email(tool_input["to_email"], tool_input["subject"], tool_input["body"])
-        return f"Email sent to {tool_input['to_email']}."
-
-    return f"Unknown tool: {name}"
+    except Exception as e:
+        logging.error("Tool %s error: %s", name, e)
+        return f"Tool error: {e}"
 
 
 def handle_message(chat_id, text):
@@ -180,6 +191,46 @@ def send_telegram_message(chat_id, text):
         pass
 
 
+def _send_long(chat_id, text):
+    """Send a potentially long message in 4000-char chunks."""
+    for i in range(0, len(text), 4000):
+        send_telegram_message(chat_id, text[i:i + 4000])
+
+
+def _handle_repair(chat_id, command: str):
+    """Synchronous repair handler for the scheduler bot's polling loop."""
+    from repair import load_error_context, investigate, apply_fix
+    ctx = load_error_context()
+    if not ctx:
+        send_telegram_message(chat_id, "No recent error context found. An error must occur first.")
+        return
+
+    age_h = (datetime.datetime.now() - datetime.datetime.fromisoformat(ctx["timestamp"])).total_seconds() / 3600
+    header = f"Last error: {ctx['script']} — {ctx['error_type']} ({age_h:.1f}h ago)\n\n"
+
+    if command == "investigate":
+        send_telegram_message(chat_id, f"Investigating {ctx['script']} error... (~1 min)")
+        try:
+            result = investigate(ctx)
+        except Exception as e:
+            send_telegram_message(chat_id, f"Claude error: {e}")
+            return
+        _send_long(chat_id, header + result)
+
+    elif command in ("apply", "apply fix"):
+        send_telegram_message(chat_id, f"Fixing {ctx['script']} error... (~3 min)")
+        try:
+            output, diff = apply_fix(ctx)
+        except Exception as e:
+            send_telegram_message(chat_id, f"Claude error: {e}")
+            return
+        _send_long(chat_id, header + output)
+        if diff:
+            _send_long(chat_id, f"Changes:\n\n{diff}")
+        else:
+            send_telegram_message(chat_id, "No file changes were made.")
+
+
 logging.basicConfig(
     filename=os.path.join(os.path.dirname(__file__), "logs", "schedule.log"),
     level=logging.INFO,
@@ -230,9 +281,13 @@ def run():
                 text = message.get("text", "").strip()
                 if chat_id and text:
                     try:
-                        reply = handle_message(chat_id, text)
-                        if reply:
-                            send_telegram_message(chat_id, reply)
+                        cmd = text.strip().lower()
+                        if cmd in ("investigate", "apply", "apply fix"):
+                            _handle_repair(chat_id, cmd)
+                        else:
+                            reply = handle_message(chat_id, text)
+                            if reply:
+                                send_telegram_message(chat_id, reply)
                     except Exception as e:
                         logging.error("Error handling message from %s: %s", chat_id, e)
         except requests.exceptions.ReadTimeout:

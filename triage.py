@@ -3,12 +3,14 @@ import logging
 import os
 import re
 import sys
+import traceback
 from datetime import datetime
 
 import requests
 from dotenv import load_dotenv
 
 import outlook
+from repair import save_error_context, REPAIR_HINT
 
 load_dotenv()
 
@@ -488,8 +490,10 @@ def main():
     try:
         counts = triage_outlook(review_entries, seen_ids)
     except Exception as e:
+        tb = traceback.format_exc()
         log.error(f"Triage failed: {e}")
-        _notify_telegram(f"⚠️ Triage failed: {e}")
+        save_error_context("triage.py", type(e).__name__, str(e), tb)
+        _notify_telegram(f"⚠️ Triage failed: {type(e).__name__}: {e}\n\n{REPAIR_HINT}")
         sys.exit(1)
 
     if not DRY_RUN:
