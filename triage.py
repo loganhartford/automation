@@ -21,6 +21,8 @@ SEEN_IDS_FILE = "logs/triage_seen.json"
 URGENT_STATE_FILE = "logs/triage_urgent_pending.json"
 ARCHIVE_LOG_FILE = "logs/triage_archive_log.json"
 ARCHIVE_DAYS = 7
+STAGED_ACTIONS_FILE = "logs/triage_staged_actions.json"
+STAGE_DELAY_HOURS = 36
 
 # Hard rules — bypass Ollama entirely
 ALWAYS_TIME_SENSITIVE_SENDERS = {
@@ -178,6 +180,65 @@ def _purge_stale_archive(session):
     _save_archive_log(remaining)
 
 
+def _load_staged():
+    if os.path.exists(STAGED_ACTIONS_FILE):
+        with open(STAGED_ACTIONS_FILE) as f:
+            try:
+                return json.load(f)
+            except Exception:
+                return []
+    return []
+
+
+def _save_staged(entries):
+    with open(STAGED_ACTIONS_FILE, "w") as f:
+        json.dump(entries, f)
+
+
+def _stage_action(email, action):
+    entries = _load_staged()
+    entries.append({
+        "id": email["id"],
+        "sender": email["sender"],
+        "subject": email["subject"],
+        "action": action,
+        "unsubscribe": email.get("unsubscribe"),
+        "staged_at": datetime.now().isoformat(),
+    })
+    _save_staged(entries)
+
+
+def _flush_staged(session):
+    """Execute staged trash/unsubscribe actions older than STAGE_DELAY_HOURS."""
+    entries = _load_staged()
+    if not entries:
+        return
+    cutoff = datetime.now().timestamp() - STAGE_DELAY_HOURS * 3600
+    remaining = []
+    flushed = 0
+    for e in entries:
+        if datetime.fromisoformat(e["staged_at"]).timestamp() < cutoff:
+            try:
+                if e["action"] == "unsubscribe":
+                    success, method = outlook.do_unsubscribe(session, e)
+                    log.info(f"  Unsubscribed via {method}" if success else f"  Unsubscribe failed ({method}), archiving anyway")
+                ok = outlook.move_to_archive(session, e["id"])
+                if ok:
+                    _append_archive_log(e["id"], e["sender"], e["subject"])
+                    flushed += 1
+                    log.info(f"[FLUSH ] {e['action'].upper()} | {e['sender']} | {e['subject']!r}")
+                else:
+                    remaining.append(e)
+            except Exception as ex:
+                log.error(f"Error flushing '{e['subject']}': {ex}")
+                remaining.append(e)
+        else:
+            remaining.append(e)
+    _save_staged(remaining)
+    if flushed:
+        log.info(f"Flushed {flushed} staged action(s)")
+
+
 def _load_seen_ids():
     if os.path.exists(SEEN_IDS_FILE):
         with open(SEEN_IDS_FILE) as f:
@@ -288,7 +349,8 @@ def triage_outlook(review_entries, seen_ids):
     session = outlook.get_session(interactive=False)
     if not DRY_RUN:
         _purge_stale_archive(session)
-    emails = outlook.get_emails(session, max_emails=200, min_age_hours=24)
+        _flush_staged(session)
+    emails = outlook.get_emails(session, max_emails=200)
     new_emails = [e for e in emails if e["id"] not in seen_ids]
     log.info(f"Fetched {len(emails)} emails, {len(new_emails)} not yet processed")
 
@@ -334,12 +396,8 @@ def triage_outlook(review_entries, seen_ids):
                     "preview": body[:400],
                 })
 
-            if not DRY_RUN:
-                success = _execute_action(session, email, action)
-                if not success:
-                    log.warning(f"  Action failed for '{subject}'")
-                    counts["error"] += 1
-                    continue
+            if not DRY_RUN and action in ("trash", "unsubscribe"):
+                _stage_action(email, action)
 
             counts[action] = counts.get(action, 0) + 1
             seen_ids.add(email["id"])

@@ -3,6 +3,7 @@ import os
 import sys
 from datetime import date, timedelta
 
+import anthropic
 import requests
 from dotenv import load_dotenv
 
@@ -25,12 +26,22 @@ ASSET_TYPES = {"checking", "savings", "cash", "otherAsset", "investmentAccount"}
 LIABILITY_TYPES = {"creditCard", "mortgage", "lineOfCredit", "otherLiability"}
 
 log = logging.getLogger(__name__)
+_anthropic_client = None
 
-NARRATIVE_SYSTEM = """\
+NARRATIVE_SYSTEM_OLLAMA = """\
 /no_think
 You are Logan's personal finance analyst writing one section of a monthly report.
 Plain text only — no asterisks, no markdown, no bullet symbols. Use blank lines between paragraphs. Be specific with numbers. Keep it concise.\
 """
+
+NARRATIVE_SYSTEM_CLAUDE = """\
+You are Logan's personal finance analyst writing one section of a monthly report.
+Plain text only — no asterisks, no markdown, no bullet symbols. Use blank lines between paragraphs. Be specific with numbers. Keep it concise.\
+"""
+
+# claude-opus-4-6 pricing
+OPUS_INPUT_COST_PER_TOKEN = 15.0 / 1_000_000
+OPUS_OUTPUT_COST_PER_TOKEN = 75.0 / 1_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +74,7 @@ def _ollama_narrative(user_prompt: str, timeout: int = 90) -> str:
             json={
                 "model": OLLAMA_MODEL,
                 "messages": [
-                    {"role": "system", "content": NARRATIVE_SYSTEM},
+                    {"role": "system", "content": NARRATIVE_SYSTEM_OLLAMA},
                     {"role": "user", "content": user_prompt},
                 ],
                 "stream": False,
@@ -78,6 +89,21 @@ def _ollama_narrative(user_prompt: str, timeout: int = 90) -> str:
         raise RuntimeError(f"Ollama returned HTTP {r.status_code}: {r.text[:200]}")
     content = r.json()["choices"][0]["message"]["content"] or ""
     return content.replace("**", "").replace("*", "").strip()
+
+
+def _claude_narrative(user_prompt: str, usage: dict, timeout: int = 90) -> str:
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic()
+    resp = _anthropic_client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=512,
+        system=NARRATIVE_SYSTEM_CLAUDE,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    usage["input_tokens"] += resp.usage.input_tokens
+    usage["output_tokens"] += resp.usage.output_tokens
+    return resp.content[0].text.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +304,7 @@ def _render_raw_data(bd: dict) -> str:
 # Main report generator
 # ---------------------------------------------------------------------------
 
-def generate_monthly_report(month: str | None = None) -> str:
+def generate_monthly_report(month: str | None = None, backend: str = "ollama") -> str:
     if month:
         y, m = map(int, month.split("-"))
         target = date(y, m, 1)
@@ -289,10 +315,17 @@ def generate_monthly_report(month: str | None = None) -> str:
     from datetime import datetime
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    log.info(f"Generating monthly report for {label}")
+    log.info(f"Generating monthly report for {label} via {backend}")
 
     america = _fetch_budget_data("america", target)
     canada = _fetch_budget_data("canada", target)
+
+    usage = {"input_tokens": 0, "output_tokens": 0}
+
+    def narrative(prompt: str, timeout: int = 90) -> str:
+        if backend == "claude":
+            return _claude_narrative(prompt, usage, timeout)
+        return _ollama_narrative(prompt, timeout)
 
     # --- Call 1: Overview ---
     overview_prompt = (
@@ -303,7 +336,7 @@ def generate_monthly_report(month: str | None = None) -> str:
         "(target is >20%), and any notable difference between the two plans. Do not use bullet points."
     )
     try:
-        overview = _ollama_narrative(overview_prompt)
+        overview = narrative(overview_prompt)
     except RuntimeError as e:
         overview = f"[Section unavailable: {e}]"
 
@@ -317,7 +350,7 @@ def generate_monthly_report(month: str | None = None) -> str:
         "If a budget had no overspending, say so in one sentence."
     )
     try:
-        overspend = _ollama_narrative(overspend_prompt)
+        overspend = narrative(overspend_prompt)
     except RuntimeError as e:
         overspend = f"[Section unavailable: {e}]"
 
@@ -331,7 +364,7 @@ def generate_monthly_report(month: str | None = None) -> str:
         "changes from the previous month. Write 2-3 sentences per observation."
     )
     try:
-        trends = _ollama_narrative(trends_prompt)
+        trends = narrative(trends_prompt)
     except RuntimeError as e:
         trends = f"[Section unavailable: {e}]"
 
@@ -349,9 +382,15 @@ def generate_monthly_report(month: str | None = None) -> str:
         "Use actual numbers (e.g. 'Cut Dining Out budget from $200 to $150'). No bullet points."
     )
     try:
-        networth = _ollama_narrative(networth_prompt, timeout=120)
+        networth = narrative(networth_prompt, timeout=120)
     except RuntimeError as e:
         networth = f"[Section unavailable: {e}]"
+
+    backend_label = "Ollama (qwen3:8b)" if backend == "ollama" else "Claude Opus"
+    footer = f"Generated with {backend_label}"
+    if backend == "claude":
+        cost = usage["input_tokens"] * OPUS_INPUT_COST_PER_TOKEN + usage["output_tokens"] * OPUS_OUTPUT_COST_PER_TOKEN
+        footer += f" — Cost: ${cost:.4f} ({usage['input_tokens']:,} input / {usage['output_tokens']:,} output tokens)"
 
     report = "\n\n".join([
         f"MONTHLY FINANCIAL REPORT — {label.upper()}\nGenerated {generated_at}",
@@ -359,15 +398,43 @@ def generate_monthly_report(month: str | None = None) -> str:
         "=== SPENDING ANALYSIS ===\n" + overspend,
         "=== TRENDS ===\n" + trends,
         "=== NET WORTH & ACTIONS ===\n" + networth,
+        footer,
     ])
 
-    log.info("Monthly report generated successfully.")
+    log.info(f"Monthly report ({backend}) generated successfully.")
     return report
+
+
+def generate_both_reports(month: str | None = None) -> tuple[str, str]:
+    """Generate the monthly report with both Ollama and Claude Opus backends."""
+    if month:
+        y, m = map(int, month.split("-"))
+        target = date(y, m, 1)
+    else:
+        target = _prev_month_date()
+
+    label = _month_label(target)
+    log.info(f"Generating dual monthly reports for {label}")
+
+    ollama_report = generate_monthly_report(month, backend="ollama")
+    claude_report = generate_monthly_report(month, backend="claude")
+    return ollama_report, claude_report
 
 
 # ---------------------------------------------------------------------------
 # CLI / systemd timer entry point
 # ---------------------------------------------------------------------------
+
+def _send_telegram(token: str, chat_id: str, text: str) -> None:
+    chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
+    for chunk in chunks:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": int(chat_id), "text": chunk},
+            timeout=15,
+        )
+        r.raise_for_status()
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -375,27 +442,29 @@ if __name__ == "__main__":
     month_arg = sys.argv[1] if len(sys.argv) > 1 else None
 
     try:
-        report = generate_monthly_report(month_arg)
+        ollama_report, claude_report = generate_both_reports(month_arg)
     except Exception as e:
-        log.error(f"Failed to generate report: {e}")
+        log.error(f"Failed to generate reports: {e}")
         sys.exit(1)
 
     token = os.getenv("TELEGRAM_YNAB_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_YNAB_CHAT_ID")
 
     if token and chat_id:
-        chunks = [report[i:i + 4000] for i in range(0, len(report), 4000)]
-        for chunk in chunks:
-            try:
-                r = requests.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": int(chat_id), "text": chunk},
-                    timeout=15,
-                )
-                r.raise_for_status()
-            except Exception as e:
-                log.error(f"Failed to send Telegram message: {e}")
-                sys.exit(1)
-        log.info(f"Report delivered via Telegram ({len(chunks)} messages).")
+        preamble = (
+            "Sending your monthly report twice — once via Ollama (local, free) and once via "
+            "Claude Opus (cloud, paid). Compare quality and choose which to keep going forward."
+        )
+        try:
+            _send_telegram(token, chat_id, preamble)
+            _send_telegram(token, chat_id, "--- OLLAMA REPORT ---\n\n" + ollama_report)
+            _send_telegram(token, chat_id, "--- CLAUDE OPUS REPORT ---\n\n" + claude_report)
+        except Exception as e:
+            log.error(f"Failed to send Telegram message: {e}")
+            sys.exit(1)
+        log.info("Dual reports delivered via Telegram.")
     else:
-        print(report)
+        print("=== OLLAMA REPORT ===\n")
+        print(ollama_report)
+        print("\n=== CLAUDE OPUS REPORT ===\n")
+        print(claude_report)

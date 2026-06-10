@@ -8,12 +8,14 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
+import anthropic
 import requests
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
-from ynab_report import generate_monthly_report
+from ynab_categorizer import categorize_transactions
+from ynab_report import generate_both_reports
 
 load_dotenv()
 
@@ -22,8 +24,6 @@ CHAT_ID = int(os.getenv("TELEGRAM_YNAB_CHAT_ID") or "0")
 YNAB_TOKEN = os.getenv("YNAB_TOKEN")
 YNAB_BASE = "https://api.ynab.com/v1"
 YNAB_HEADERS = {"Authorization": f"Bearer {YNAB_TOKEN}"}
-OLLAMA_BASE = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3:8b"
 LOG_FILE = "logs/ynab_bot.log"
 
 BUDGET_IDS = {
@@ -45,12 +45,13 @@ REPORT_KEYWORDS = (
     "monthly report", "financial report", "send me the report",
     "generate report", "monthly summary", "finance report",
 )
+CATEGORIZE_KEYWORDS = ("categorize", "auto-categorize", "uncategorized transactions", "categorise")
 
+client = anthropic.Anthropic()
 executor = ThreadPoolExecutor(max_workers=1)
 conversations: dict[int, list] = {}
 
 SYSTEM_PROMPT = """\
-/no_think
 You are Logan's personal finance assistant. You have access to his YNAB budgets:
 - "america" = America - 2026 (USD, current US budget)
 - "canada" = Canada - 2026 (CAD, Canadian budget)
@@ -71,51 +72,42 @@ Plain text only. No asterisks, no markdown, no special symbols. Use blank lines 
 
 TOOLS = [
     {
-        "type": "function",
-        "function": {
-            "name": "get_spending_summary",
-            "description": "Get spending totals grouped by category for a date range",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "budget": {"type": "string", "enum": ["america", "canada"], "description": "Which budget to query"},
-                    "since_date": {"type": "string", "description": "Start date YYYY-MM-DD (inclusive)"},
-                    "until_date": {"type": "string", "description": "End date YYYY-MM-DD (inclusive), defaults to today"},
-                },
-                "required": ["budget", "since_date"],
+        "name": "get_spending_summary",
+        "description": "Get spending totals grouped by category for a date range",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "budget": {"type": "string", "enum": ["america", "canada"], "description": "Which budget to query"},
+                "since_date": {"type": "string", "description": "Start date YYYY-MM-DD (inclusive)"},
+                "until_date": {"type": "string", "description": "End date YYYY-MM-DD (inclusive), defaults to today"},
             },
+            "required": ["budget", "since_date"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "list_transactions",
-            "description": "List individual transactions, optionally filtered by category",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "budget": {"type": "string", "enum": ["america", "canada"]},
-                    "since_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
-                    "until_date": {"type": "string", "description": "End date YYYY-MM-DD, defaults to today"},
-                    "category": {"type": "string", "description": "Optional category name to filter by (case-insensitive substring match)"},
-                },
-                "required": ["budget", "since_date"],
+        "name": "list_transactions",
+        "description": "List individual transactions, optionally filtered by category",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "budget": {"type": "string", "enum": ["america", "canada"]},
+                "since_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
+                "until_date": {"type": "string", "description": "End date YYYY-MM-DD, defaults to today"},
+                "category": {"type": "string", "description": "Optional category name to filter by (case-insensitive substring match)"},
             },
+            "required": ["budget", "since_date"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "get_budget_vs_actual",
-            "description": "Get budgeted amount vs actual spending for each category in a given month",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "budget": {"type": "string", "enum": ["america", "canada"]},
-                    "month": {"type": "string", "description": "Month in YYYY-MM-01 format (e.g. 2026-05-01)"},
-                },
-                "required": ["budget", "month"],
+        "name": "get_budget_vs_actual",
+        "description": "Get budgeted amount vs actual spending for each category in a given month",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "budget": {"type": "string", "enum": ["america", "canada"]},
+                "month": {"type": "string", "description": "Month in YYYY-MM-01 format (e.g. 2026-05-01)"},
             },
+            "required": ["budget", "month"],
         },
     },
 ]
@@ -286,44 +278,41 @@ def _execute_tool(name, inp):
     return f"Unknown tool: {name}"
 
 
-def _ollama_chat(messages):
-    try:
-        r = requests.post(
-            f"{OLLAMA_BASE}/v1/chat/completions",
-            json={"model": OLLAMA_MODEL, "messages": messages, "tools": TOOLS, "stream": False},
-            timeout=120,
-        )
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError("Ollama is not running — start it with: ollama serve")
-    except requests.exceptions.Timeout:
-        raise RuntimeError("Ollama timed out after 120s — model may be overloaded.")
-    if r.status_code != 200:
-        raise RuntimeError(f"Ollama returned HTTP {r.status_code}: {r.text[:200]}")
-    return r.json()["choices"][0]
-
-
 def _run_agent(history: list) -> str:
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(history)
+    messages = list(history)
     while True:
-        choice = _ollama_chat(messages)
-        msg = choice["message"]
-        finish = choice["finish_reason"]
+        resp = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=4096,
+            system=SYSTEM_PROMPT,
+            tools=TOOLS,
+            messages=messages,
+        )
 
-        if finish == "tool_calls":
-            messages.append(msg)
-            for tc in msg.get("tool_calls", []):
-                fn = tc["function"]
-                try:
-                    inp = json.loads(fn["arguments"]) if isinstance(fn["arguments"], str) else fn["arguments"]
-                    result = _execute_tool(fn["name"], inp)
-                except Exception as e:
-                    result = f"Tool error: {e}"
-                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+        text = "\n".join(b.text for b in resp.content if hasattr(b, "text"))
+
+        if resp.stop_reason in ("end_turn", "max_tokens"):
+            if resp.stop_reason == "max_tokens" and text:
+                text += "\n\n[Response truncated — try asking for a shorter date range]"
+            history.append({"role": "assistant", "content": text or "No response generated."})
+            return text or "No response generated."
+
+        if resp.stop_reason == "tool_use":
+            messages.append({"role": "assistant", "content": resp.content})
+            results = []
+            for b in resp.content:
+                if b.type == "tool_use":
+                    try:
+                        result = _execute_tool(b.name, b.input)
+                    except Exception as e:
+                        result = f"Tool error: {e}"
+                    results.append({"type": "tool_result", "tool_use_id": b.id, "content": result})
+            messages.append({"role": "user", "content": results})
             continue
 
-        text = msg.get("content") or ""
-        history.append({"role": "assistant", "content": text})
-        return text
+        break
+
+    return "Unexpected issue. Please try again."
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -350,15 +339,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         month_arg = month_match.group(1) if month_match else None
         try:
             loop = asyncio.get_event_loop()
-            report = await loop.run_in_executor(executor, generate_monthly_report, month_arg)
-            report = report.replace("**", "").replace("*", "")
-            for i in range(0, len(report), 4000):
-                await update.message.reply_text(report[i:i + 4000])
+            ollama_report, claude_report = await loop.run_in_executor(executor, generate_both_reports, month_arg)
+            preamble = (
+                "Sending your monthly report twice — once via Ollama (local, free) and once via "
+                "Claude Opus (cloud, paid). Compare quality and choose which to keep going forward."
+            )
+            await update.message.reply_text(preamble)
+            for i in range(0, len(ollama_report), 4000):
+                await update.message.reply_text(("--- OLLAMA REPORT ---\n\n" if i == 0 else "") + ollama_report[i:i + 4000].replace("**", "").replace("*", ""))
+            for i in range(0, len(claude_report), 4000):
+                await update.message.reply_text(("--- CLAUDE OPUS REPORT ---\n\n" if i == 0 else "") + claude_report[i:i + 4000].replace("**", "").replace("*", ""))
         except RuntimeError as e:
             log.error(f"Report error: {e}")
             await update.message.reply_text(f"Error generating report: {e}")
         except Exception as e:
             log.error(f"Report unexpected error: {e}\n{traceback.format_exc()}")
+            await update.message.reply_text(f"Unexpected error: {type(e).__name__}: {e}")
+        return
+
+    if any(kw in text_lower for kw in CATEGORIZE_KEYWORDS):
+        budget_key = "canada" if "canada" in text_lower else "america"
+        since_match = re.search(r'(\d{4}-\d{2}-\d{2})', text)
+        since_arg = since_match.group(1) if since_match else None
+        try:
+            loop = asyncio.get_event_loop()
+            summary = await loop.run_in_executor(executor, categorize_transactions, budget_key, since_arg)
+            await update.message.reply_text(summary)
+        except RuntimeError as e:
+            log.error(f"Categorize error: {e}")
+            await update.message.reply_text(f"Error: {e}")
+        except Exception as e:
+            log.error(f"Categorize unexpected error: {e}\n{traceback.format_exc()}")
             await update.message.reply_text(f"Unexpected error: {type(e).__name__}: {e}")
         return
 

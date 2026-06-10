@@ -202,11 +202,12 @@ def get_todays_events():
             events.append({
                 "summary": e.get("summary", "Untitled"),
                 "start_pt": start_dt.strftime("%-I:%M %p"),
+                "start_dt": start_dt,
                 "attendees": e.get("attendees", []),
                 "description": e.get("description", ""),
             })
 
-    events.sort(key=lambda e: e["start_pt"])
+    events.sort(key=lambda e: e["start_dt"])
     return events
 
 
