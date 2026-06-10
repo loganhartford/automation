@@ -78,10 +78,11 @@ Telegram-based Google Calendar management. External attendees book via Google Ca
 
 **Files:**
 ```
-telegram_bot.py      # Claude agent (claude-opus-4-6) for calendar control — 4 tools
-calendar_api.py      # Google Calendar: free slots, create/reschedule/cancel
-calendar_notify.py   # Detects new bookings, notifies via Telegram
-telegram_notifier.py # One-way Telegram notification helper
+telegram_bot.py            # Claude agent (claude-opus-4-6) for calendar control — 4 tools
+calendar_api.py            # Google Calendar: free slots, create/reschedule/cancel, today's events
+calendar_notify.py         # Detects new bookings with external attendees, notifies via Telegram
+morning_meeting_notify.py  # 8am PT daily — Ollama classifies today's events, notifies if meetings found
+telegram_notifier.py       # One-way Telegram notification helper
 ```
 
 State: `logs/calendar_notify_state.json` — tracks `last_checked` and `notified_ids`.
@@ -249,10 +250,38 @@ WEBHOOK_SECRET=
 
 ### 3. Google OAuth
 
-- Go to console.cloud.google.com → `startup-scout` project → APIs & Services → Credentials → download OAuth client JSON → save as `credentials.json`
+Two separate Cloud projects:
+
+**Gmail Scout** (`token.pickle`, `calendar_gmail_token.pickle`) — `startup-scout` project at console.cloud.google.com:
 - `token.pickle` (Gmail Scout): `python3 ingest.py` — browser required
-- `calendar_token.pickle`: `python3 -c "from calendar_api import get_calendar_service; get_calendar_service()"`
 - `calendar_gmail_token.pickle`: `python3 -c "from gmail import get_calendar_gmail_service; get_calendar_gmail_service()"`
+
+**Calendar** (`calendar_token.pickle`, `credentials.json`) — separate project under main Gmail account, OAuth consent screen set to External + Published (no 7-day token expiry):
+- Re-auth requires the SSH-safe console flow (no browser available on the server):
+  ```bash
+  rm calendar_token.pickle
+  # generate URL:
+  python3 -c "
+  import json, secrets, hashlib, base64, urllib.parse
+  with open('credentials.json') as f: cs = json.load(f)['installed']
+  v = secrets.token_urlsafe(64)
+  c = base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).rstrip(b'=').decode()
+  params = {'response_type':'code','client_id':cs['client_id'],'redirect_uri':'urn:ietf:wg:oauth:2.0:oob','scope':'https://www.googleapis.com/auth/calendar','code_challenge':c,'code_challenge_method':'S256','access_type':'offline','prompt':'consent'}
+  open('/tmp/cal_verifier.txt','w').write(v)
+  print(cs['auth_uri'] + '?' + urllib.parse.urlencode(params))
+  "
+  # visit URL, paste code, then exchange:
+  python3 -c "
+  import pickle, json, requests as req
+  cs = json.load(open('credentials.json'))['installed']
+  v = open('/tmp/cal_verifier.txt').read().strip()
+  code = input('Code: ')
+  r = req.post(cs['token_uri'], data={'code':code,'client_id':cs['client_id'],'client_secret':cs['client_secret'],'redirect_uri':'urn:ietf:wg:oauth:2.0:oob','grant_type':'authorization_code','code_verifier':v})
+  t = r.json(); from google.oauth2.credentials import Credentials
+  pickle.dump(Credentials(token=t['access_token'],refresh_token=t.get('refresh_token'),token_uri=cs['token_uri'],client_id=cs['client_id'],client_secret=cs['client_secret'],scopes=['https://www.googleapis.com/auth/calendar']), open('calendar_token.pickle','wb'))
+  print('Done')
+  "
+  ```
 
 To add a new Gmail account: copy an existing service function in `gmail.py`, update the token filename and email constant, run once to generate the token, then add the account to **Test users** in the OAuth consent screen (console.cloud.google.com → OAuth consent screen).
 
@@ -331,7 +360,7 @@ All are in `.gitignore`. If any token is exposed, rotate it immediately.
 
 **Gmail auth stopped working** — delete `token.pickle`, run `python3 ingest.py` (browser required).
 
-**Calendar token expired** — delete `calendar_token.pickle`, re-run the OAuth flow.
+**Calendar token expired** — delete `calendar_token.pickle`, follow the SSH-safe re-auth steps in Setup > Google OAuth above. The consent screen is published so tokens auto-refresh indefinitely once issued — expiry usually means the token file was deleted or corrupted.
 
 **Outlook token expired** — delete `outlook_token.pickle`, run `python3 outlook.py`.
 
