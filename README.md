@@ -23,6 +23,8 @@ evaluate.py        # LLM pipeline: extract → discover → prefilter → dealbr
 ingest.py          # Reads unread scout emails, calls evaluate.process_newsletter()
 report.py          # Queries DB, renders HTML, emails report, marks companies notified
 scout_bot.py       # Telegram bot for on-demand company evaluation
+status_report.py   # Weekly automation status email covering all three flows
+repair.py          # Error context persistence + Claude Code auto-repair runner
 rerun.py           # Batch re-evaluate companies already in DB (with cost guardrails)
 db.py              # SQLite wrapper (single companies table, all read/write)
 gmail.py           # Gmail API: auth, read emails, send plain/HTML emails
@@ -48,6 +50,19 @@ python3 rerun.py 25                               # re-evaluate 25 most recent c
 python3 reset_reports.py                          # reset notified companies for retesting
 ```
 
+**Error alerting & auto-repair:**
+
+`ingest.py` and `report.py` send a Telegram alert via the scout bot on any crash. Error routing depends on type:
+- `RefreshError` (Gmail token expired) → Telegram only. Email is unavailable when Gmail auth is broken, so attempting to send an alert email would fail silently. Delete `token.pickle` and re-run the OAuth flow.
+- `CreditExhaustedError` (HTTP 402) → Telegram + email.
+- All other exceptions → Telegram + email (email attempt is wrapped so a secondary failure doesn't mask the original).
+
+On any fixable crash, `repair.py` writes full context (script, error type, traceback, timestamp) to `logs/last_error.json`. Reply in the scout bot chat:
+- `investigate` — Claude Code reads the relevant files and returns a plain-text proposed fix. No edits made. $0.50 budget cap.
+- `apply` — Claude Code edits the file(s) to fix the error, then returns the full `git diff` for review before you commit. $1.50 budget cap.
+
+Auth errors and credit exhaustion do not save repair context — both require manual intervention and can't be fixed by editing code.
+
 **Changing criteria:** All prompts live in `evaluate.py` — `EXTRACTION_PROMPT`, `DEALBREAKER_CRITERIA` dict, `REPORT_PROMPT`, and the `generate_report` tool schema. To add or remove a field, update the prompt and tool schema, then update `DEALBREAKER_LABELS` / `REPORT_LABELS` in `report.py`.
 
 ---
@@ -70,6 +85,8 @@ telegram_notifier.py # One-way Telegram notification helper
 ```
 
 State: `logs/calendar_notify_state.json` — tracks `last_checked` and `notified_ids`.
+
+**Error alerting:** `calendar_notify.py` sends a Telegram alert via the scheduler bot for `RefreshError` (token expired), `HttpError` (API failure), and unexpected exceptions. `telegram_bot.py`'s `_execute_tool` catches `RefreshError` from calendar API calls and returns a descriptive message in the bot chat rather than crashing the polling loop. Reply `investigate` or `apply` in the scheduler bot chat to use the auto-repair flow.
 
 Settings: America/Vancouver (PT), Mon–Fri 10am–3pm availability, 30-min slots. All calendar operations use `sendUpdates="all"` so Google handles invite emails automatically.
 
@@ -113,6 +130,8 @@ logs/triage_review_<date>_<time>.txt  # dry-run output for prompt tuning
 ```
 
 **Safety invariant:** `triage_bot.py`'s `send_reply` tool never sends without explicit user approval. The agent prompt enforces this — don't weaken it.
+
+**Error alerting & auto-repair:** Crashes in `triage.py` send a Telegram alert via the triage bot and save context to `logs/last_error.json`. Reply `investigate` or `apply` in the triage bot chat to trigger the same Claude Code repair flow described under Scout. Outlook `RuntimeError` (token expired) is surfaced as a message inside the triage bot chat rather than crashing — it includes the re-auth command.
 
 **Running:**
 ```bash
@@ -253,9 +272,11 @@ Unit files at `~/.config/systemd/user/`. All enabled — start automatically on 
 |------|---------|--------|
 | `scout-ingest.timer` | hourly | `ingest.py` |
 | `scout-report.timer` | daily 7am | `report.py` |
+| `scout-status-report.timer` | Sunday 8am | `status_report.py` |
 | `scout-bot.service` | always-on | `scout_bot.py` |
 | `scout-schedule.service` | always-on | `telegram_bot.py` |
 | `scout-calendar-notify.timer` | every 5 min | `calendar_notify.py` |
+| `scout-morning-meetings.timer` | daily 8am | `morning_meeting_notify.py` |
 | `triage.timer` | hourly | `triage.py` |
 | `triage-bot.service` | always-on | `triage_bot.py` |
 | `ynab-bot.service` | always-on | `ynab_bot.py` |
@@ -277,7 +298,7 @@ journalctl --user -u scout-bot -f
 journalctl --user -u ynab-bot -n 50
 ```
 
-Logs also written to `logs/`: `ingest.log`, `report.log`, `bot.log`, `schedule.log`, `triage.log`, `triage_bot.log`, `ynab_bot.log`, `ynab_categorizer.log`.
+Logs also written to `logs/`: `ingest.log`, `report.log`, `schedule.log`, `triage.log`, `triage_bot.log`, `status_report.log`, `ynab_bot.log`, `ynab_categorizer.log`. Auto-repair error context: `logs/last_error.json` (overwritten on each new crash).
 
 **Networking:** UFW active, port 22 only. All Telegram bots use long-polling (no inbound ports). Cloudflare Tunnel handles any inbound web traffic.
 
@@ -318,7 +339,13 @@ All are in `.gitignore`. If any token is exposed, rotate it immediately.
 
 **Telegram bot not responding** — all bots use long-polling. Check `journalctl --user -u <service> -n 50`.
 
-**Anthropic API errors** — check billing at console.anthropic.com. Pipeline raises `CreditExhaustedError` on HTTP 402 and sends an alert email.
+**Anthropic API errors** — check billing at console.anthropic.com. Pipeline raises `CreditExhaustedError` on HTTP 402 and sends a Telegram alert + email.
+
+**Scout/triage crash alerts** — non-auth failures send a Telegram message with the error type. The message includes a repair hint. Reply `investigate` for a read-only Claude Code analysis (no file edits), or `apply` to let Claude Code edit the file(s) directly. The `git diff` is returned after `apply` so you can review before committing. Works in the scout, triage, and scheduler bot chats — each routes to the same `logs/last_error.json` context.
+
+**Gmail auth broken** — `ingest.py` and `report.py` will alert via Telegram only (they can't email when Gmail is broken). Delete `token.pickle` and re-run the OAuth flow. The repair flow does not apply to auth failures.
+
+**Calendar auth broken** — `calendar_notify.py` sends a Telegram alert with re-auth instructions. `telegram_bot.py` surfaces the error as a bot message so the polling loop keeps running.
 
 **Ollama not running** — `ollama serve` to start, `ollama pull qwen3:8b` to ensure the model is present.
 
