@@ -1,4 +1,4 @@
-"""Weekly automation status report — emailed from scout account to logan.hartford@outlook.com."""
+"""Weekly automation status report — delivered via the scout Telegram bot."""
 import json
 import os
 import re
@@ -6,44 +6,53 @@ import sqlite3
 import subprocess
 import traceback
 from datetime import datetime, timedelta
-from html import escape
 
 import requests
 from dotenv import load_dotenv
-
-from gmail import send_report
 
 load_dotenv()
 
 DB_PATH = "scout.db"
 TRIAGE_LOG = "logs/triage.log"
 URGENT_STATE_FILE = "logs/triage_urgent_pending.json"
+YNAB_LOG = "logs/ynab_categorizer_log.json"
 
 _SERVICES = {
     "scout-bot.service": "Scout Bot",
+    "triage-bot.service": "Triage Bot",
     "scout-schedule.service": "Scheduler Bot",
+    "ynab-bot.service": "YNAB Bot",
 }
 
 _TIMERS = {
     "scout-ingest.timer": "Scout Ingest",
     "scout-report.timer": "Scout Report",
+    "scout-status-report.timer": "Status Report",
     "scout-calendar-notify.timer": "Calendar Notify",
+    "scout-morning-meetings.timer": "Morning Meetings",
+    "triage.timer": "Email Triage",
+    "ynab-report.timer": "YNAB Report",
+    "ynab-categorize.timer": "YNAB Categorize",
+    "ynab-weekly-summary.timer": "YNAB Weekly Summary",
 }
 
 
-def _notify_telegram(msg):
+def _send_telegram(msg):
+    """Send a (potentially long) message to the scout bot chat in 4000-char chunks."""
     token = os.getenv("TELEGRAM_SCOUT_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_SCOUT_CHAT_ID")
     if not token or not chat_id:
+        print("Telegram credentials not set.")
         return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": msg},
-            timeout=10,
-        )
-    except Exception:
-        pass
+    for i in range(0, len(msg), 4000):
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg[i:i + 4000]},
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"Telegram send failed: {e}")
 
 
 def _unit_status(unit):
@@ -55,14 +64,6 @@ def _unit_status(unit):
         return r.stdout.strip()
     except Exception:
         return "unknown"
-
-
-def _status_badge(s):
-    if s == "active":
-        return '<span style="color:#2e7d32;font-weight:bold">● active</span>'
-    if s in ("inactive", "failed"):
-        return f'<span style="color:#c62828;font-weight:bold">● {escape(s)}</span>'
-    return f'<span style="color:#888">{escape(s)}</span>'
 
 
 def _scout_stats(since):
@@ -78,12 +79,7 @@ def _scout_stats(since):
     passed = [r for r in rows if r[1]]
     failed = [r for r in rows if not r[1]]
     cost = sum(r[2] for r in rows if r[2] is not None)
-    return {
-        "total": len(rows),
-        "passed": passed,
-        "failed": failed,
-        "cost": cost,
-    }
+    return {"total": len(rows), "passed": passed, "failed": failed, "cost": cost}
 
 
 def _triage_stats(since):
@@ -119,6 +115,25 @@ def _triage_stats(since):
     return {"runs": runs, **totals}
 
 
+def _ynab_stats(since):
+    if not os.path.exists(YNAB_LOG):
+        return None
+    try:
+        with open(YNAB_LOG) as f:
+            entries = json.load(f)
+    except Exception:
+        return None
+    since_str = since.strftime("%Y-%m-%d")
+    recent = [e for e in entries if e.get("date", "") >= since_str]
+    applied = [e for e in recent if e.get("confidence") == "high"]
+    skipped = [e for e in recent if e.get("confidence") != "high"]
+    budgets = {}
+    for e in applied:
+        b = e.get("budget", "unknown")
+        budgets[b] = budgets.get(b, 0) + 1
+    return {"total": len(recent), "applied": len(applied), "skipped": len(skipped), "budgets": budgets}
+
+
 def _pending_urgent():
     try:
         if os.path.exists(URGENT_STATE_FILE):
@@ -135,80 +150,79 @@ def generate_status_report():
 
     scout = _scout_stats(since)
     triage = _triage_stats(since)
+    ynab = _ynab_stats(since)
     pending = _pending_urgent()
 
     svc_statuses = {svc: _unit_status(svc) for svc in _SERVICES}
     timer_statuses = {t: _unit_status(t) for t in _TIMERS}
 
-    html = f"""<html>
-<body style="font-family:sans-serif;max-width:720px;margin:40px auto;color:#222;line-height:1.6;font-size:15px;">
-<h1 style="border-bottom:2px solid #eee;padding-bottom:8px">Automation Status — {date_str}</h1>
-<p style="color:#666;font-size:13px">Last 7 days. Generated {datetime.now().strftime("%Y-%m-%d %H:%M")}.</p>
+    lines = [f"Automation Status — {date_str}", f"Last 7 days\n"]
 
-<h2>Services</h2>
-<table style="border-collapse:collapse;font-size:14px">
-"""
+    # Services
+    lines.append("── Services ──")
     for svc, label in _SERVICES.items():
-        html += f'<tr><td style="padding:3px 16px 3px 0"><b>{escape(label)}</b></td><td>{_status_badge(svc_statuses[svc])}</td></tr>\n'
+        s = svc_statuses[svc]
+        icon = "✓" if s == "active" else "✗"
+        lines.append(f"{icon} {label}: {s}")
+    lines.append("")
     for timer, label in _TIMERS.items():
-        html += f'<tr><td style="padding:3px 16px 3px 0">{escape(label)} (timer)</td><td>{_status_badge(timer_statuses[timer])}</td></tr>\n'
-    html += "</table>\n<hr>\n"
+        s = timer_statuses[timer]
+        icon = "✓" if s == "active" else "✗"
+        lines.append(f"{icon} {label}: {s}")
 
-    # --- Startup Scout ---
-    html += "<h2>Startup Scout</h2>\n"
+    # Scout
+    lines.append("\n── Startup Scout ──")
     if scout is None:
-        html += "<p>Could not read scout database.</p>\n"
+        lines.append("Could not read scout database.")
     elif scout["total"] == 0:
-        html += "<p>No companies evaluated this week.</p>\n"
+        lines.append("No companies evaluated this week.")
     else:
-        html += (
-            f"<p>Evaluated: <b>{scout['total']}</b> — "
-            f"<b>{len(scout['passed'])}</b> passed, <b>{len(scout['failed'])}</b> failed | "
-            f"API cost: <b>${scout['cost']:.4f}</b></p>\n"
+        lines.append(
+            f"Evaluated: {scout['total']} — {len(scout['passed'])} passed, "
+            f"{len(scout['failed'])} failed | Cost: ${scout['cost']:.4f}"
         )
         if scout["passed"]:
-            html += "<h3 style='margin-top:12px'>Passed</h3>\n<ul style='margin:0;padding-left:20px'>\n"
-            for name, _, cost in scout["passed"]:
-                cost_str = f" (${cost:.4f})" if cost else ""
-                html += f"<li>{escape(name)}{escape(cost_str)}</li>\n"
-            html += "</ul>\n"
+            names = ", ".join(
+                f"{r[0]} (${r[2]:.4f})" if r[2] else r[0]
+                for r in scout["passed"]
+            )
+            lines.append(f"Passed: {names}")
         if scout["failed"]:
-            html += "<h3 style='margin-top:12px'>Failed</h3>\n<ul style='margin:0;padding-left:20px;color:#666'>\n"
-            for name, _, _ in scout["failed"]:
-                html += f"<li>{escape(name)}</li>\n"
-            html += "</ul>\n"
-    html += "<hr>\n"
+            lines.append(f"Failed: {', '.join(r[0] for r in scout['failed'])}")
 
-    # --- Email Triage ---
-    html += "<h2>Email Triage</h2>\n"
+    # Triage
+    lines.append("\n── Email Triage ──")
     if triage is None:
-        html += "<p>Could not read triage logs.</p>\n"
+        lines.append("Could not read triage logs.")
     elif triage["runs"] == 0:
-        html += "<p>No triage runs recorded this week.</p>\n"
+        lines.append("No triage runs this week.")
     else:
-        html += f"<p>Runs: <b>{triage['runs']}</b></p>\n"
-        html += """<table style="border-collapse:collapse;font-size:14px">
-<tr><td style="padding:3px 16px 3px 0">Time-sensitive</td><td><b>{time_sensitive}</b></td></tr>
-<tr><td style="padding:3px 16px 3px 0">Kept</td><td><b>{keep}</b></td></tr>
-<tr><td style="padding:3px 16px 3px 0">Trashed</td><td><b>{trash}</b></td></tr>
-<tr><td style="padding:3px 16px 3px 0">Unsubscribed</td><td><b>{unsubscribe}</b></td></tr>
-<tr><td style="padding:3px 16px 3px 0">Errors</td><td><b>{error}</b></td></tr>
-</table>\n""".format(**triage)
+        lines.append(f"Runs: {triage['runs']}")
+        lines.append(
+            f"Time-sensitive: {triage['time_sensitive']} | Kept: {triage['keep']} | "
+            f"Trashed: {triage['trash']} | Unsubscribed: {triage['unsubscribe']} | "
+            f"Errors: {triage['error']}"
+        )
         if triage["error"] > 0:
-            html += f'<p style="color:#c62828">⚠️ {triage["error"]} error(s) during triage. Check logs/triage.log.</p>\n'
+            lines.append(f"⚠️ {triage['error']} error(s) — check logs/triage.log")
     if pending:
-        html += f"<p>📬 Pending urgent emails awaiting action: <b>{len(pending)}</b></p>\n"
-    html += "<hr>\n"
+        lines.append(f"📬 Pending urgent: {len(pending)}")
 
-    html += '<p style="color:#999;font-size:12px">Sent by status_report.py from loganhartford.scout@gmail.com</p>\n'
-    html += "</body></html>"
+    # YNAB
+    lines.append("\n── YNAB ──")
+    if ynab is None:
+        lines.append("Could not read YNAB categorizer log.")
+    elif ynab["total"] == 0:
+        lines.append("No categorization activity this week.")
+    else:
+        budget_str = ", ".join(f"{b}: {n}" for b, n in sorted(ynab["budgets"].items()))
+        lines.append(
+            f"Categorized: {ynab['applied']} applied"
+            f"{f' ({budget_str})' if budget_str else ''}"
+            f", {ynab['skipped']} skipped"
+        )
 
-    send_report(
-        to_address="logan.hartford@outlook.com",
-        subject=f"Automation Status — {date_str}",
-        markdown_body="Weekly automation status report. See the HTML version.",
-        html_body=html,
-    )
+    _send_telegram("\n".join(lines))
     print(f"Status report sent for {date_str}.")
 
 
@@ -217,6 +231,6 @@ if __name__ == "__main__":
         generate_status_report()
     except Exception as e:
         tb = traceback.format_exc()
-        _notify_telegram(f"⚠️ Status report failed: {type(e).__name__}: {e}")
+        _send_telegram(f"⚠️ Status report failed: {type(e).__name__}: {e}")
         print(f"Error: {tb}")
         raise

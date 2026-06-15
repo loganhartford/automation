@@ -30,8 +30,10 @@ def get_calendar_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
+            raise RuntimeError(
+                "Calendar auth token missing or invalid. Re-authorize: delete "
+                "calendar_token.pickle and follow the SSH OAuth flow in the README."
+            )
         with open(CALENDAR_TOKEN_FILE, "wb") as f:
             pickle.dump(creds, f)
     return build("calendar", "v3", credentials=creds)

@@ -23,7 +23,7 @@ evaluate.py        # LLM pipeline: extract → discover → prefilter → dealbr
 ingest.py          # Reads unread scout emails, calls evaluate.process_newsletter()
 report.py          # Queries DB, renders HTML, emails report, marks companies notified
 scout_bot.py       # Telegram bot for on-demand company evaluation
-status_report.py   # Weekly automation status email covering all three flows
+status_report.py   # Weekly automation status via Telegram: services, Scout stats, Triage stats, YNAB stats
 repair.py          # Error context persistence + Claude Code auto-repair runner
 rerun.py           # Batch re-evaluate companies already in DB (with cost guardrails)
 db.py              # SQLite wrapper (single companies table, all read/write)
