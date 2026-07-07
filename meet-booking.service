@@ -1,0 +1,25 @@
+[Unit]
+Description=Meet booking page (self-hosted Calendly) — gunicorn on 127.0.0.1:5001
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=logan
+WorkingDirectory=/home/logan/automation
+# Bind to loopback only — the Cloudflare Tunnel connects here; nothing is exposed on the LAN/WAN.
+# Single worker so the in-process availability cache + background refresher are
+# shared; threads keep page loads snappy while a booking POST is in flight.
+ExecStart=/home/logan/automation/venv/bin/gunicorn --workers 1 --threads 4 --bind 127.0.0.1:5001 schedule:app
+Restart=on-failure
+RestartSec=3
+
+# Least-privilege hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelTunables=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,5 @@
 import os
+import uuid
 import pickle
 import datetime
 import pytz
@@ -10,9 +11,21 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CREDENTIALS_FILE = "credentials.json"
 CALENDAR_TOKEN_FILE = "calendar_token.pickle"
 TIMEZONE = "America/Vancouver"
-SLOT_DURATION_MINUTES = 30
-AVAILABLE_START_HOUR = 10  # 10:00 AM
-AVAILABLE_END_HOUR = 15    # 3:00 PM — last slot starts at 2:30
+# Booking window and rules
+AVAILABLE_START = (11, 0)              # 11:00 AM — first possible start
+AVAILABLE_END = (15, 30)              # 3:30 PM — meetings must end by this time
+SLOT_GRID_MINUTES = 30                # start times offered on a 30-minute grid
+MIN_LEAD_HOURS = 24                   # no bookings sooner than 24h from now
+ALLOWED_DURATIONS = [15, 30, 45, 60]  # minutes the booker may choose
+MIN_DURATION = min(ALLOWED_DURATIONS)
+MAX_DURATION = max(ALLOWED_DURATIONS)
+
+# This account (calendar_token.pickle) is a headless "booking robot": it reads
+# availability across all subscribed calendars and issues invites. The real
+# human-facing calendar/inbox is Outlook, added as an attendee on every booking
+# so the meeting lands on the Outlook calendar and recruiters see this address.
+MEETING_HOST_EMAIL = "logan.hartford@outlook.com"
+MEETING_HOST_NAME = "Logan Hartford"
 
 
 def get_calendar_service():
@@ -39,17 +52,48 @@ def get_calendar_service():
     return build("calendar", "v3", credentials=creds)
 
 
-def get_free_slots(days_ahead=14):
-    """Return list of (start_dt, end_dt) available 30-min slots in PT.
+def _fetch_busy_intervals(service, range_start_iso, range_end_iso):
+    """Return [(start_utc, end_utc), ...] busy intervals across all calendars.
 
-    Checks all calendars on the account using events.list so we can exclude
-    all-day and multi-day events (which have 'date' rather than 'dateTime').
-    Only timed events with a specific start/end block slots.
+    Uses events.list per calendar so we can exclude all-day/multi-day events
+    (which use 'date' not 'dateTime') and events explicitly shown as Free.
+    """
+    utc = pytz.utc
+    cal_list = service.calendarList().list().execute()
+    busy = []
+    for cal in cal_list.get("items", []):
+        events_result = service.events().list(
+            calendarId=cal["id"],
+            timeMin=range_start_iso,
+            timeMax=range_end_iso,
+            singleEvents=True,
+        ).execute()
+        for event in events_result.get("items", []):
+            if "dateTime" not in event.get("start", {}):
+                continue
+            if event.get("transparency") == "transparent":
+                continue
+            b_start = datetime.datetime.fromisoformat(event["start"]["dateTime"])
+            b_end = datetime.datetime.fromisoformat(event["end"]["dateTime"])
+            busy.append((b_start.astimezone(utc), b_end.astimezone(utc)))
+    return busy
+
+
+def get_available_slots(days_ahead=14):
+    """Return [(start_dt, max_minutes), ...] of bookable start times in PT.
+
+    Start times sit on a SLOT_GRID_MINUTES grid inside the daily window
+    (AVAILABLE_START..AVAILABLE_END), weekdays only, at least MIN_LEAD_HOURS
+    from now and at most days_ahead out. max_minutes is the longest meeting
+    that fits from that start before the next busy event or end-of-day (capped
+    at MAX_DURATION) so the UI can offer only durations that actually fit.
     """
     tz = pytz.timezone(TIMEZONE)
+    utc = pytz.utc
     now = datetime.datetime.now(tz)
+    earliest = now + datetime.timedelta(hours=MIN_LEAD_HOURS)
 
-    candidate_slots = []
+    candidates = []  # (start_dt, window_end_dt)
     day = now.date()
     days_checked = 0
     while days_checked < days_ahead:
@@ -57,83 +101,91 @@ def get_free_slots(days_ahead=14):
         if day.weekday() >= 5:  # Skip Saturday (5) and Sunday (6)
             continue
         days_checked += 1
+        win_start = tz.localize(datetime.datetime(day.year, day.month, day.day, *AVAILABLE_START))
+        win_end = tz.localize(datetime.datetime(day.year, day.month, day.day, *AVAILABLE_END))
+        t = win_start
+        while t + datetime.timedelta(minutes=MIN_DURATION) <= win_end:
+            candidates.append((t, win_end))
+            t += datetime.timedelta(minutes=SLOT_GRID_MINUTES)
 
-        hour = AVAILABLE_START_HOUR
-        minute = 0
-        while hour < AVAILABLE_END_HOUR:
-            start = tz.localize(datetime.datetime(day.year, day.month, day.day, hour, minute))
-            end = start + datetime.timedelta(minutes=SLOT_DURATION_MINUTES)
-            candidate_slots.append((start, end))
-            total = hour * 60 + minute + SLOT_DURATION_MINUTES
-            hour = total // 60
-            minute = total % 60
-
-    if not candidate_slots:
+    if not candidates:
         return []
 
     service = get_calendar_service()
-    range_start = candidate_slots[0][0].isoformat()
-    range_end = candidate_slots[-1][1].isoformat()
+    busy = _fetch_busy_intervals(service, candidates[0][0].isoformat(), candidates[-1][1].isoformat())
 
-    # Fetch all calendars on the account
-    cal_list = service.calendarList().list().execute()
-    calendar_ids = [cal["id"] for cal in cal_list.get("items", [])]
+    result = []
+    for start, win_end in candidates:
+        if start < earliest:
+            continue
+        s_utc = start.astimezone(utc)
+        # Start must not fall inside a busy interval.
+        if any(b_start <= s_utc < b_end for b_start, b_end in busy):
+            continue
+        # Longest meeting that fits = until the next busy interval or end-of-day.
+        limit = win_end
+        for b_start, _b_end in busy:
+            if b_start > s_utc:
+                b_local = b_start.astimezone(tz)
+                if b_local < limit:
+                    limit = b_local
+        max_min = min(int((limit - start).total_seconds() // 60), MAX_DURATION)
+        if max_min >= MIN_DURATION:
+            result.append((start, max_min))
+    return result
 
-    utc = pytz.utc
-    busy = []
-    for cal_id in calendar_ids:
-        events_result = service.events().list(
-            calendarId=cal_id,
-            timeMin=range_start,
-            timeMax=range_end,
-            singleEvents=True,
-        ).execute()
 
-        for event in events_result.get("items", []):
-            # Skip all-day and multi-day events — they use 'date' not 'dateTime'
-            if "dateTime" not in event.get("start", {}):
-                continue
-            # Skip events marked as free/transparent (e.g. "Show as: Free")
-            if event.get("transparency") == "transparent":
-                continue
-            b_start = datetime.datetime.fromisoformat(event["start"]["dateTime"])
-            b_end = datetime.datetime.fromisoformat(event["end"]["dateTime"])
-            busy.append((b_start.astimezone(utc), b_end.astimezone(utc)))
+def duration_fits(start_dt, duration_minutes, days_ahead=14):
+    """Server-side guard: True if a meeting of duration_minutes can start at start_dt.
 
-    free = []
-    for slot_start, slot_end in candidate_slots:
-        s_utc = slot_start.astimezone(utc)
-        e_utc = slot_end.astimezone(utc)
-        if not any(s_utc < b_end and e_utc > b_start for b_start, b_end in busy):
-            free.append((slot_start, slot_end))
-
-    return free
+    Re-verifies against live availability so crafted POSTs can't book an
+    arbitrary/past/too-long/taken slot.
+    """
+    if duration_minutes not in ALLOWED_DURATIONS:
+        return False
+    for slot_start, max_min in get_available_slots(days_ahead=days_ahead):
+        if abs((slot_start - start_dt).total_seconds()) < 1:
+            return duration_minutes <= max_min
+    return False
 
 
 def create_booking(attendee_name, attendee_email, start_dt, end_dt, notes=""):
-    """Create a Google Calendar event and send an invite to the attendee."""
+    """Create a Google Calendar event with a Meet link and invite attendee + host.
+
+    The event is created on this (Google) account so it carries a real Google
+    Meet link, then invited to both the booker and MEETING_HOST_EMAIL (Outlook),
+    so it lands on the Outlook calendar and the booker sees the host address.
+    """
     service = get_calendar_service()
+
+    description = notes.strip() if notes else ""
+    if description:
+        description += "\n\n"
+    description += f"Contact: {MEETING_HOST_EMAIL}"
 
     event = {
         "summary": f"Logan Hartford <> {attendee_name}",
-        "description": notes or "",
+        "description": description,
         "start": {"dateTime": start_dt.isoformat(), "timeZone": TIMEZONE},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": TIMEZONE},
-        "attendees": [{"email": attendee_email, "displayName": attendee_name}],
+        "attendees": [
+            {"email": attendee_email, "displayName": attendee_name},
+            {"email": MEETING_HOST_EMAIL, "displayName": MEETING_HOST_NAME},
+        ],
         "reminders": {"useDefault": False, "overrides": []},
+        "conferenceData": {
+            "createRequest": {
+                "requestId": uuid.uuid4().hex,
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        },
     }
 
     created = service.events().insert(
         calendarId="primary",
         body=event,
         sendUpdates="all",
-    ).execute()
-
-    # Patch only the organizer's personal reminder — does not affect attendees
-    service.events().patch(
-        calendarId="primary",
-        eventId=created["id"],
-        body={"reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 5}]}},
+        conferenceDataVersion=1,  # required for Google Meet link creation
     ).execute()
 
     return created
