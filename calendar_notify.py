@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from google.auth.exceptions import RefreshError
 from googleapiclient.errors import HttpError
 from calendar_api import get_calendar_service
+from calendar_sync import run as sync_calendars
 from telegram_notifier import notify
 
 load_dotenv()
@@ -49,6 +50,7 @@ def run():
 
     try:
         service = get_calendar_service()
+        sync_calendars(service)
         result = service.events().list(
             calendarId="primary",
             updatedMin=updated_min,

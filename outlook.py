@@ -32,9 +32,15 @@ def _save_token_cache(cache):
             pickle.dump(cache.serialize(), f)
 
 
+class _TimeoutSession(requests.Session):
+    def request(self, *args, **kwargs):
+        kwargs.setdefault("timeout", 30)
+        return super().request(*args, **kwargs)
+
+
 def _get_access_token(interactive=True):
     cache = _load_token_cache()
-    app = msal.PublicClientApplication(CLIENT_ID, authority=AUTHORITY, token_cache=cache)
+    app = msal.PublicClientApplication(CLIENT_ID, authority=AUTHORITY, token_cache=cache, http_client=_TimeoutSession())
 
     accounts = app.get_accounts()
     result = None

@@ -199,6 +199,8 @@ def get_todays_events():
                 continue
             if e["id"] in seen_ids:
                 continue
+            if e.get("description", "").startswith("[auto-"):
+                continue
             seen_ids.add(e["id"])
             start_dt = datetime.datetime.fromisoformat(e["start"]["dateTime"]).astimezone(tz)
             events.append({
