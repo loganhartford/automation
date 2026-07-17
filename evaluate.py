@@ -1,6 +1,8 @@
 import os
+import re
 import time
 import anthropic
+import requests as _requests
 from anthropic import APIStatusError
 from dotenv import load_dotenv
 from db import init_db, already_seen, save_company, get_company_by_id, update_company_report
@@ -349,6 +351,59 @@ def evaluate_dealbreaker(name: str, description: str, discovery_context: str, de
         return {"answer": "unknown", "reason": f"Evaluation error: {e}"}
 
 
+def _check_exclusions_ollama(name: str, discovery_context: str) -> tuple[bool, str]:
+    """Check all category exclusions in one local model call.
+    Returns (excluded, reason). Defaults to (False, "") on any failure."""
+    prompt = (
+        f"Company: {name}\n\n"
+        f"Summary: {discovery_context}\n\n"
+        "Evaluate whether this company should be excluded from consideration for a Canadian "
+        "(non-US citizen) embedded/firmware engineer. Check three criteria:\n\n"
+        "1. itar_restricted: Does the core engineering work require US citizenship or security "
+        "clearance? YES only for: military rockets/missiles, weapons systems, military satellite "
+        "payloads, classified defense programs. NOT for: commercial space, general robotics, "
+        "defense software, dual-use tech, commercial nuclear.\n\n"
+        "2. quantum_computing: Is this primarily a quantum computing company? YES for: quantum "
+        "processors, quantum algorithms, quantum networking, quantum sensing as the core business. "
+        "NOT for: companies that merely use quantum-inspired classical algorithms.\n\n"
+        "3. medical_device: Is this primarily a medical device company? YES for: FDA-regulated "
+        "implants, diagnostics hardware, surgical robots, wearable health monitors as the core "
+        "product. NOT for: health software, drug discovery, biotech without a physical device.\n\n"
+        "When uncertain on any criterion, answer false. Only mark true if clearly applicable."
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "itar_restricted": {"type": "boolean"},
+            "quantum_computing": {"type": "boolean"},
+            "medical_device": {"type": "boolean"},
+        },
+        "required": ["itar_restricted", "quantum_computing", "medical_device"],
+    }
+    payload = {
+        "model": "qwen3:8b",
+        "think": False,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "format": schema,
+        "options": {"temperature": 0},
+    }
+    try:
+        resp = _requests.post("http://localhost:11434/api/chat", json=payload, timeout=30)
+        resp.raise_for_status()
+        result = json.loads(resp.json()["message"]["content"])
+        if result.get("itar_restricted"):
+            return True, "Likely requires US citizenship or security clearance (ITAR-controlled technology)."
+        if result.get("quantum_computing"):
+            return True, "Quantum computing company — outside target domain."
+        if result.get("medical_device"):
+            return True, "Medical device company — outside target domain."
+        return False, ""
+    except Exception as e:
+        print(f"  Exclusion check failed ({type(e).__name__}): {e}")
+        return False, ""
+
+
 def check_dealbreakers_sequential(name: str, description: str, discovery_context: str) -> tuple[bool, dict]:
     results = {}
 
@@ -374,6 +429,13 @@ def check_dealbreakers_sequential(name: str, description: str, discovery_context
                 if remaining not in results:
                     results[remaining] = {"answer": "unknown", "reason": "Not evaluated (earlier dealbreaker failed)."}
             return False, results
+    print(f"  [{name}] Checking category exclusions...")
+    excluded, excl_reason = _check_exclusions_ollama(name, discovery_context)
+    if excluded:
+        print(f"  [{name}] Excluded: {excl_reason}")
+        results["excluded"] = {"answer": "no", "reason": excl_reason}
+        return False, results
+
     passed = all(v["answer"] != "no" for v in results.values())
     return passed, results
 
@@ -598,12 +660,14 @@ def check_dealbreakers(name: str, description: str, research_context: str = "") 
     return check_dealbreakers_sequential(name, description, research_context)
 
 
-def process_newsletter(text: str, source: str = "manual"):
+def process_newsletter(text: str, source: str = "manual") -> int:
+    """Process a newsletter and return the number of companies that passed dealbreakers."""
     init_db()
     print(f"\nExtracting companies from newsletter...")
     companies = extract_companies(text)
     print(f"Found {len(companies)} companies: {[c['name'] for c in companies]}")
 
+    passed_count = 0
     for company in companies:
         try:
             name = company["name"]
@@ -635,9 +699,12 @@ def process_newsletter(text: str, source: str = "manual"):
             }
             save_company(name, source, passed=True, report=json.dumps(report), cost=_current_cost())
             print(f"  [{name}] Passed dealbreakers. Saved for weekly report.")
+            passed_count += 1
         except Exception as e:
             print(f"  [{company.get('name', 'unknown')}] ERROR: {e}")
             continue
+
+    return passed_count
 
 
 def evaluate_company(name: str):

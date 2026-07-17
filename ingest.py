@@ -29,7 +29,7 @@ def _notify_telegram(msg):
         pass
 
 
-def ingest():
+def ingest(report_every=None):
     print("Checking for new newsletters...")
     service = get_service()
     emails = get_unread_emails()
@@ -38,19 +38,34 @@ def ingest():
         print("No new emails.")
         return
 
+    passed_this_run = 0
     for subject, sender_email, body, message_id in emails:
         if not body.strip():
             print(f"  Skipping {subject} — empty body.")
             mark_as_read(service, message_id)
             continue
         print(f"Processing: {subject} (from {sender_email})")
-        process_newsletter(body, source=sender_email)
+        passed = process_newsletter(body, source=sender_email)
+        passed_this_run += passed
         mark_as_read(service, message_id)
         print(f"Done: {subject}")
 
+        if report_every and passed_this_run >= report_every:
+            print(f"\n{passed_this_run} companies passed — sending interim report...")
+            from report import generate_weekly_report
+            generate_weekly_report()
+            passed_this_run = 0
+
 if __name__ == "__main__":
+    import sys
+    args = sys.argv[1:]
+    report_every = None
+    if "--report-every" in args:
+        idx = args.index("--report-every")
+        report_every = int(args[idx + 1])
+
     try:
-        ingest()
+        ingest(report_every=report_every)
     except RefreshError:
         # Gmail auth is broken — can't send email, so Telegram only.
         _notify_telegram(

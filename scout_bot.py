@@ -18,6 +18,7 @@ client = anthropic.Anthropic()
 DEALBREAKER_LABELS = {
     "developing_hardware": "Developing Hardware",
     "is_startup": "Is a Startup",
+    "excluded": "Category Eligible",
     "solves_real_problem": "Solves Real Problem",
     "growing_quickly": "Growing Quickly",
     "billion_dollar_potential": "Billion Dollar Potential",

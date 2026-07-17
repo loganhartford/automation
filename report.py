@@ -6,7 +6,7 @@ from datetime import datetime
 from html import escape
 from dotenv import load_dotenv
 from google.auth.exceptions import RefreshError
-from db import get_unreported_companies, mark_as_reported, get_source_stats
+from db import get_unreported_companies, mark_as_reported, get_source_stats, get_total_cost_since
 from gmail import send_report
 from repair import save_error_context, REPAIR_HINT
 
@@ -31,6 +31,7 @@ def _notify_telegram(msg):
 DEALBREAKER_LABELS = {
     "developing_hardware": "Developing Hardware?",
     "is_startup": "Is a Startup?",
+    "excluded": "Category Eligible?",
     "solves_real_problem": "Solves Real Problem?",
     "growing_quickly": "Growing Quickly?",
     "billion_dollar_potential": "Billion Dollar Potential?",
@@ -175,9 +176,18 @@ def generate_weekly_report():
 
     # Cost summary
     if costs:
-        total_cost = sum(costs)
+        report_cost = sum(costs)
+        earliest_seen = min(c[2] for c in companies)
+        total_cost = get_total_cost_since(earliest_seen)
+        failed_cost = total_cost - report_cost
         html += f'<h2>Report Cost</h2>'
-        html += f'<p class="meta">Total: ${total_cost:.4f} across {len(costs)} evaluated {"company" if len(costs) == 1 else "companies"}</p>'
+        html += (
+            f'<p class="meta">'
+            f'Passed companies: ${report_cost:.4f} ({len(costs)} {"company" if len(costs) == 1 else "companies"})'
+            f' &nbsp;|&nbsp; Failed/filtered: ${failed_cost:.4f}'
+            f' &nbsp;|&nbsp; <strong>Total: ${total_cost:.4f}</strong>'
+            f'</p>'
+        )
         html += "<hr>"
 
     # All-time source stats

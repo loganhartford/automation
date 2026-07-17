@@ -125,6 +125,17 @@ def mark_as_reported(names: list):
     conn.close()
 
 
+def get_total_cost_since(since_iso: str) -> float:
+    """Sum cost of all companies (passed and failed) first seen on or after since_iso."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT COALESCE(SUM(cost), 0) FROM companies WHERE first_seen >= ?",
+        (since_iso,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row else 0.0
+
+
 def get_source_stats():
     """Return all-time (source, passed, failed) rows sorted by total desc."""
     conn = sqlite3.connect(DB_PATH)
