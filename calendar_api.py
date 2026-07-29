@@ -1,6 +1,7 @@
 import os
 import uuid
 import pickle
+import logging
 import datetime
 import pytz
 from google.auth.transport.requests import Request
@@ -12,8 +13,8 @@ CREDENTIALS_FILE = "credentials.json"
 CALENDAR_TOKEN_FILE = "calendar_token.pickle"
 TIMEZONE = "America/Vancouver"
 # Booking window and rules
-AVAILABLE_START = (11, 0)              # 11:00 AM — first possible start
-AVAILABLE_END = (15, 30)              # 3:30 PM — meetings must end by this time
+AVAILABLE_START = (9, 0)               # 9:00 AM — first possible start
+AVAILABLE_END = (17, 30)              # 5:30 PM — meetings must end by this time
 SLOT_GRID_MINUTES = 30                # start times offered on a 30-minute grid
 MIN_LEAD_HOURS = 24                   # no bookings sooner than 24h from now
 ALLOWED_DURATIONS = [15, 30, 45, 60]  # minutes the booker may choose
@@ -79,6 +80,21 @@ def _fetch_busy_intervals(service, range_start_iso, range_end_iso):
     return busy
 
 
+def _fetch_outlook_busy(range_start_utc_iso, range_end_utc_iso):
+    """Busy intervals straight from Outlook via Microsoft Graph (real-time).
+
+    Returns [] and logs on any failure so the booking page still works off the
+    Google-side calendars if Outlook auth/query is unavailable.
+    """
+    try:
+        import outlook
+        session = outlook.get_session(interactive=False)
+        return outlook.get_calendar_busy(session, range_start_utc_iso, range_end_utc_iso)
+    except Exception as e:
+        logging.warning("calendar_api: Outlook busy fetch failed (%s); using Google data only", e)
+        return []
+
+
 def get_available_slots(days_ahead=14):
     """Return [(start_dt, max_minutes), ...] of bookable start times in PT.
 
@@ -111,8 +127,14 @@ def get_available_slots(days_ahead=14):
     if not candidates:
         return []
 
+    range_start_dt = candidates[0][0]
+    range_end_dt = candidates[-1][1]
     service = get_calendar_service()
-    busy = _fetch_busy_intervals(service, candidates[0][0].isoformat(), candidates[-1][1].isoformat())
+    # Google-side calendars (bookings, shared, Apple/Outlook imports) ...
+    busy = _fetch_busy_intervals(service, range_start_dt.isoformat(), range_end_dt.isoformat())
+    # ... plus Outlook queried directly so it's never stale from iCal-sync lag.
+    busy += _fetch_outlook_busy(range_start_dt.astimezone(utc).isoformat(),
+                                range_end_dt.astimezone(utc).isoformat())
 
     result = []
     for start, win_end in candidates:
@@ -149,23 +171,35 @@ def duration_fits(start_dt, duration_minutes, days_ahead=14):
     return False
 
 
-def create_booking(attendee_name, attendee_email, start_dt, end_dt, notes=""):
+def _compose_description(notes, reschedule_url=None):
+    """Build the event description body from notes + reschedule link + contact line."""
+    parts = []
+    if notes and notes.strip():
+        parts.append(notes.strip())
+    if reschedule_url:
+        parts.append(f"Need to reschedule? {reschedule_url}")
+    parts.append(f"Contact: {MEETING_HOST_EMAIL}")
+    return "\n\n".join(parts)
+
+
+def create_booking(attendee_name, attendee_email, start_dt, end_dt, notes="",
+                   reschedule_url_fn=None):
     """Create a Google Calendar event with a Meet link and invite attendee + host.
 
     The event is created on this (Google) account so it carries a real Google
     Meet link, then invited to both the booker and MEETING_HOST_EMAIL (Outlook),
     so it lands on the Outlook calendar and the booker sees the host address.
+
+    If reschedule_url_fn is provided, it is called with the created event id to
+    produce a reschedule URL which is then patched into the event description.
+    We do this in two calls because the token is derived from the event id
+    Google generates for us.
     """
     service = get_calendar_service()
 
-    description = notes.strip() if notes else ""
-    if description:
-        description += "\n\n"
-    description += f"Contact: {MEETING_HOST_EMAIL}"
-
     event = {
         "summary": f"Logan Hartford <> {attendee_name}",
-        "description": description,
+        "description": _compose_description(notes),
         "start": {"dateTime": start_dt.isoformat(), "timeZone": TIMEZONE},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": TIMEZONE},
         "attendees": [
@@ -188,7 +222,46 @@ def create_booking(attendee_name, attendee_email, start_dt, end_dt, notes=""):
         conferenceDataVersion=1,  # required for Google Meet link creation
     ).execute()
 
+    if reschedule_url_fn is not None:
+        reschedule_url = reschedule_url_fn(created["id"])
+        service.events().patch(
+            calendarId="primary",
+            eventId=created["id"],
+            body={"description": _compose_description(notes, reschedule_url)},
+            sendUpdates="none",  # avoid a second invite email for the description tweak
+        ).execute()
+
     return created
+
+
+def get_booking(event_id):
+    """Return a compact dict describing an existing booking, or None if gone/cancelled.
+
+    Used by the reschedule flow to show the booker what they currently hold.
+    """
+    service = get_calendar_service()
+    try:
+        event = service.events().get(calendarId="primary", eventId=event_id).execute()
+    except Exception:
+        return None
+    if event.get("status") == "cancelled":
+        return None
+    if "dateTime" not in event.get("start", {}):
+        return None
+    tz = pytz.timezone(TIMEZONE)
+    start_dt = datetime.datetime.fromisoformat(event["start"]["dateTime"]).astimezone(tz)
+    end_dt = datetime.datetime.fromisoformat(event["end"]["dateTime"]).astimezone(tz)
+    external = [a for a in event.get("attendees", []) if not a.get("self")
+                and a.get("email") != MEETING_HOST_EMAIL]
+    attendee = external[0] if external else {}
+    return {
+        "event_id": event["id"],
+        "start_dt": start_dt,
+        "end_dt": end_dt,
+        "duration": int((end_dt - start_dt).total_seconds() // 60),
+        "attendee_name": attendee.get("displayName", ""),
+        "attendee_email": attendee.get("email", ""),
+    }
 
 
 def get_upcoming_bookings(days_ahead=30):
@@ -289,3 +362,16 @@ def cancel_booking(event_id):
         eventId=event_id,
         sendUpdates="all",
     ).execute()
+
+
+def create_event(title, start_dt, end_dt, description=""):
+    """Create a calendar event with no attendees (blocks, personal events, etc.)."""
+    service = get_calendar_service()
+    event = {
+        "summary": title,
+        "start": {"dateTime": start_dt.isoformat(), "timeZone": TIMEZONE},
+        "end": {"dateTime": end_dt.isoformat(), "timeZone": TIMEZONE},
+    }
+    if description:
+        event["description"] = description
+    return service.events().insert(calendarId="primary", body=event).execute()

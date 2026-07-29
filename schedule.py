@@ -5,9 +5,13 @@ import logging
 import datetime
 import threading
 import requests
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, abort
+from itsdangerous import URLSafeSerializer, BadSignature
 from dotenv import load_dotenv
-from calendar_api import get_available_slots, create_booking, duration_fits, ALLOWED_DURATIONS
+from calendar_api import (
+    get_available_slots, create_booking, duration_fits, ALLOWED_DURATIONS,
+    get_booking, reschedule_booking,
+)
 from telegram_notifier import notify
 from telegram_bot import handle_message, send_telegram_message
 
@@ -79,6 +83,29 @@ def _slot_available_fast(start_dt, duration):
 TURNSTILE_SITE_KEY = os.getenv("TURNSTILE_SITE_KEY", "")
 TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "")
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+# Reschedule tokens are signed (not encrypted) — the event id is derivable, so
+# the signature is just tamper protection. Reuses WEBHOOK_SECRET as the signing
+# key so we don't have to manage a second secret; salted separately.
+_RESCHEDULE_SALT = "meet-reschedule-v1"
+_SIGNING_KEY = os.getenv("WEBHOOK_SECRET") or "insecure-dev-key-set-WEBHOOK_SECRET"
+_reschedule_signer = URLSafeSerializer(_SIGNING_KEY, salt=_RESCHEDULE_SALT)
+MEET_BASE_URL = os.getenv("MEET_BASE_URL", "https://meet.lhartford.com")
+
+
+def _make_reschedule_token(event_id):
+    return _reschedule_signer.dumps(event_id)
+
+
+def _reschedule_url_for(event_id):
+    return f"{MEET_BASE_URL}/reschedule/{_make_reschedule_token(event_id)}"
+
+
+def _event_id_from_token(token):
+    try:
+        return _reschedule_signer.loads(token)
+    except BadSignature:
+        return None
 
 
 def _verify_turnstile(token, remote_ip=None):
@@ -156,7 +183,8 @@ def book():
         return redirect(url_for("index"))
 
     end_dt = start_dt + datetime.timedelta(minutes=duration)
-    create_booking(name, email, start_dt, end_dt, notes)
+    create_booking(name, email, start_dt, end_dt, notes,
+                   reschedule_url_fn=_reschedule_url_for)
 
     day_str = start_dt.strftime("%a %b %-d, %-I:%M %p")
     notify(f"\U0001f4c5 New booking: {name} ({email}) — {day_str} PT ({duration} min)")
@@ -181,6 +209,90 @@ def booked():
         return redirect(url_for("index"))
     end_dt = start_dt + datetime.timedelta(minutes=duration)
     return render_template("booked.html", name=name, email=email,
+                           start_dt=start_dt, end_dt=end_dt, duration=duration)
+
+
+@app.route("/reschedule/<token>", methods=["GET"])
+def reschedule(token):
+    event_id = _event_id_from_token(token)
+    if not event_id:
+        abort(404)
+    booking = get_booking(event_id)
+    if not booking:
+        # Event was cancelled or otherwise gone — nothing to reschedule.
+        return render_template("reschedule_missing.html"), 404
+
+    with _cache_lock:
+        grouped = _slots_cache["grouped"]
+        ts = _slots_cache["ts"]
+    if ts == 0.0:
+        _safe_refresh()
+        with _cache_lock:
+            grouped = _slots_cache["grouped"]
+
+    return render_template(
+        "reschedule.html",
+        booking=booking,
+        days=grouped,
+        durations=ALLOWED_DURATIONS,
+        default_duration=booking["duration"],
+        token=token,
+        turnstile_sitekey=TURNSTILE_SITE_KEY,
+    )
+
+
+@app.route("/reschedule/<token>", methods=["POST"])
+def reschedule_submit(token):
+    event_id = _event_id_from_token(token)
+    if not event_id:
+        abort(404)
+    booking = get_booking(event_id)
+    if not booking:
+        return render_template("reschedule_missing.html"), 404
+
+    if not _verify_turnstile(request.form.get("cf-turnstile-response", ""),
+                             request.headers.get("CF-Connecting-IP")):
+        return redirect(url_for("reschedule", token=token))
+
+    slot_str = (request.form.get("slot") or "").strip()
+    try:
+        start_dt = datetime.datetime.fromisoformat(slot_str)
+        duration = int(request.form.get("duration", ""))
+    except ValueError:
+        return redirect(url_for("reschedule", token=token))
+
+    if not _slot_available_fast(start_dt, duration):
+        return redirect(url_for("reschedule", token=token))
+
+    end_dt = start_dt + datetime.timedelta(minutes=duration)
+    reschedule_booking(event_id, start_dt, end_dt)
+
+    day_str = start_dt.strftime("%a %b %-d, %-I:%M %p")
+    old_day_str = booking["start_dt"].strftime("%a %b %-d, %-I:%M %p")
+    notify(f"\U0001f504 Reschedule: {booking['attendee_name']} ({booking['attendee_email']}) "
+           f"— {old_day_str} → {day_str} PT ({duration} min)")
+
+    _refresh_slots_async()
+
+    return redirect(url_for("rescheduled",
+                            name=booking["attendee_name"],
+                            email=booking["attendee_email"],
+                            slot=start_dt.isoformat(),
+                            duration=duration))
+
+
+@app.route("/rescheduled")
+def rescheduled():
+    name = request.args.get("name", "")
+    email = request.args.get("email", "")
+    slot_str = request.args.get("slot", "")
+    try:
+        start_dt = datetime.datetime.fromisoformat(slot_str)
+        duration = int(request.args.get("duration", DEFAULT_DURATION))
+    except ValueError:
+        return redirect(url_for("index"))
+    end_dt = start_dt + datetime.timedelta(minutes=duration)
+    return render_template("rescheduled.html", name=name, email=email,
                            start_dt=start_dt, end_dt=end_dt, duration=duration)
 
 

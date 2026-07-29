@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Not Found</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8fafc; color: #1e293b; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center; padding: 40px 16px;
+        }
+        .container { max-width: 460px; width: 100%; text-align: center; }
+        h1 { font-size: 1.6rem; font-weight: 700; color: #0f172a; margin-bottom: 10px; }
+        p { color: #64748b; font-size: 0.95rem; line-height: 1.55; margin-bottom: 24px; }
+        .btn {
+            display: inline-block; padding: 12px 22px; background: #6366f1; color: white;
+            border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.95rem;
+        }
+        .btn:hover { background: #4f46e5; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>This meeting can't be rescheduled</h1>
+    <p>
+        We couldn't find the booking behind this link — it may have already been
+        rescheduled or cancelled. Book a new time below.
+    </p>
+    <a class="btn" href="/">Book a new meeting</a>
+</div>
+</body>
+</html>

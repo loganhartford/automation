@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-SCOPES = ["Mail.ReadWrite", "Mail.Send"]
+SCOPES = ["Mail.ReadWrite", "Mail.Send", "Calendars.Read"]
 AUTHORITY = "https://login.microsoftonline.com/consumers"
 
 CLIENT_ID = os.getenv("OUTLOOK_CLIENT_ID")
@@ -72,6 +72,45 @@ def get_session(interactive=True):
         "Content-Type": "application/json",
     })
     return session
+
+
+def get_calendar_busy(session, start_iso_utc, end_iso_utc):
+    """Return [(start_utc, end_utc), ...] busy intervals from the Outlook calendar.
+
+    Queries Graph calendarView directly (real-time), so booking availability no
+    longer depends on Google's slow iCal-subscription refresh. Skips all-day
+    events and anything shown as Free; treats busy/tentative/out-of-office as busy.
+    Datetimes are returned tz-aware in UTC.
+    """
+    import datetime
+
+    def _parse(dt_str):
+        # Graph (with Prefer UTC) returns e.g. '2026-07-31T17:00:00.0000000'
+        base = dt_str.split(".")[0].replace("Z", "")
+        return datetime.datetime.fromisoformat(base).replace(tzinfo=datetime.timezone.utc)
+
+    busy = []
+    url = f"{GRAPH_BASE}/me/calendarView"
+    params = {
+        "startDateTime": start_iso_utc,
+        "endDateTime": end_iso_utc,
+        "$select": "subject,start,end,isAllDay,showAs",
+        "$top": 200,
+    }
+    headers = {"Prefer": 'outlook.timezone="UTC"'}
+    while url:
+        resp = session.get(url, params=params, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        for ev in data.get("value", []):
+            if ev.get("isAllDay"):
+                continue
+            if ev.get("showAs", "busy") in ("free", "workingElsewhere"):
+                continue
+            busy.append((_parse(ev["start"]["dateTime"]), _parse(ev["end"]["dateTime"])))
+        url = data.get("@odata.nextLink")
+        params = None  # nextLink already encodes the query params
+    return busy
 
 
 def _extract_text(body):

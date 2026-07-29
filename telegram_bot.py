@@ -7,7 +7,7 @@ import anthropic
 import requests
 from dotenv import load_dotenv
 from google.auth.exceptions import RefreshError
-from calendar_api import get_upcoming_bookings, reschedule_booking, cancel_booking
+from calendar_api import get_upcoming_bookings, reschedule_booking, cancel_booking, create_event
 from gmail import send_calendar_email
 
 load_dotenv()
@@ -17,9 +17,9 @@ MAX_HISTORY = 20
 
 _conversation_history = {}
 
-SYSTEM_PROMPT = """You are Logan's scheduling assistant. You manage Logan's calendar bookings.
+SYSTEM_PROMPT = """You are Logan's scheduling assistant. You manage Logan's Google Calendar.
 
-You can list upcoming bookings, reschedule them, cancel them, or send a custom email to a participant. When a request is ambiguous (e.g. multiple bookings or unclear time), ask a clarifying question before acting. Keep replies brief. You are communicating via Telegram, so use plain text only — no markdown formatting.
+You can list upcoming bookings, reschedule them, cancel them, send a custom email to a participant, or create new events (blocks, holds, personal events, busy blocks, etc.). When a request is ambiguous (e.g. multiple bookings or unclear time), ask a clarifying question before acting. Keep replies brief. You are communicating via Telegram, so use plain text only — no markdown formatting.
 
 Current time: {now} (Pacific Time)"""
 
@@ -75,6 +75,20 @@ TOOLS = [
             },
             "required": ["to_email", "subject", "body"]
         }
+    },
+    {
+        "name": "create_event",
+        "description": "Create a calendar event with no external attendees. Use for busy blocks, holds, personal events, or anything that doesn't involve inviting someone.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Event title"},
+                "start_iso": {"type": "string", "description": "Start time in ISO 8601 with UTC offset, e.g. 2026-07-28T09:00:00-07:00"},
+                "end_iso": {"type": "string", "description": "End time in ISO 8601 with UTC offset"},
+                "description": {"type": "string", "description": "Optional event description"}
+            },
+            "required": ["title", "start_iso", "end_iso"]
+        }
     }
 ]
 
@@ -106,6 +120,14 @@ def _execute_tool(name, tool_input):
         if name == "email_participant":
             send_calendar_email(tool_input["to_email"], tool_input["subject"], tool_input["body"])
             return f"Email sent to {tool_input['to_email']}."
+
+        if name == "create_event":
+            start = datetime.datetime.fromisoformat(tool_input["start_iso"])
+            end = datetime.datetime.fromisoformat(tool_input["end_iso"])
+            tz = pytz.timezone(TIMEZONE)
+            create_event(tool_input["title"], start, end, tool_input.get("description", ""))
+            label = start.astimezone(tz).strftime("%a %b %-d at %-I:%M %p PT")
+            return f"Created \"{tool_input['title']}\" on {label}."
 
         return f"Unknown tool: {name}"
 
